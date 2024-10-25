@@ -1127,6 +1127,8 @@ fn exit_vault(
         });
         // println!("deposit_tokens_to_withdraw: {:?}", deposit_tokens_to_withdraw);
         msgs.push(unloop_to_withdraw);
+    } else {
+        //Exit the vault token vault
     }
 
     //Reset & Set Sender for Unloop Props
