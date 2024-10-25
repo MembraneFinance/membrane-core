@@ -1890,7 +1890,7 @@ fn handle_unloop_reply(
                     Ok(backing) => backing,
                     Err(_) => return Err(StdError::GenericErr { msg: String::from("Failed to query the Mars Vault Token for the backing amount in unloop reply") }),
                 };
-                panic!("sender: {:?}", unloop_props.sender);
+                // panic!("sender: {:?}", unloop_props.sender);
                 //Send the deposit tokens to the user
                 let send_deposit_to_user_msg: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
                     to_address: unloop_props.clone().sender,
@@ -2155,7 +2155,7 @@ fn get_buffer_amounts(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
     //Delete old UNLOOP_PROPS
-    UNLOOP_PROPS.remove(deps.storage);
+    // UNLOOP_PROPS.remove(deps.storage);
     //New struct will save on the next exit vault
 
     Ok(Response::default())
