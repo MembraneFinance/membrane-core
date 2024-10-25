@@ -1127,9 +1127,11 @@ fn exit_vault(
         });
         // println!("deposit_tokens_to_withdraw: {:?}", deposit_tokens_to_withdraw);
         msgs.push(unloop_to_withdraw);
-    } else {
+    } 
+    //if vtokens_to_unloop_from_cdp is zero, we can just withdraw the necessary vault tokens
+    else {
         //Exit the vault token vault 
-        let withdraw_deposit_tokens_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+        let withdraw_vault_tokens_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: config.deposit_token.vault_addr.to_string(),
             msg: to_json_binary(&Vault_ExecuteMsg::ExitVault { })?,
             funds: vec![
@@ -1139,7 +1141,7 @@ fn exit_vault(
                 }
             ],
         });
-        msgs.push(withdraw_deposit_tokens_msg);
+        msgs.push(withdraw_vault_tokens_msg);
 
         //Query the backing for the strategy's vault tokens
         let vt_backing: Uint128 = match deps.querier.query_wasm_smart::<Uint128>(
@@ -1149,9 +1151,8 @@ fn exit_vault(
             },
         ){
             Ok(backing) => backing,
-            Err(_) => return Err(StdError::GenericErr { msg: String::from("Failed to query the Mars Vault Token for the backing amount in unloop reply") }),
+            Err(_) => return Err(TokenFactoryError::CustomError { val: String::from("Failed to query the Mars Vault Token for the backing amount in unloop reply") }),
         };
-        // panic!("sender: {:?}", unloop_props.sender);
         //Send the deposit tokens to the user
         let send_deposit_to_user_msg: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
             to_address: unloop_props.clone().sender,
