@@ -461,7 +461,7 @@ fn unloop_cdp(
 
         //Set unloop props
         unloop_props = UnloopProps {
-            sender: info.sender.clone().to_string(),
+            sender: unloop_props.sender.clone(),
             owned_collateral: owned_collateral.clone().to_uint_floor(),
             debt_to_clear: debt_to_clear.clone(),
             loop_count: 0,
@@ -580,7 +580,42 @@ fn unloop_cdp(
             funds: vec![],
         });
         msgs.push(SubMsg::new(withdraw_msg));
+        
+        //Exit the vault token vault 
+        let withdraw_deposit_tokens_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: config.deposit_token.vault_addr.to_string(),
+            msg: to_json_binary(&Vault_ExecuteMsg::ExitVault { })?,
+            funds: vec![
+                Coin {
+                    denom: config.deposit_token.vault_token.clone(),
+                    amount: unloop_props.owned_collateral.clone(),
+                }
+            ],
+        });
+        msgs.push(SubMsg::new(withdraw_deposit_tokens_msg));
+
+        //Query the backing for the strategy's vault tokens
+        let vt_backing: Uint128 = match deps.querier.query_wasm_smart::<Uint128>(
+            config.deposit_token.vault_addr.to_string(),
+            &Vault_QueryMsg::VaultTokenUnderlying { 
+                vault_token_amount: unloop_props.owned_collateral.clone()
+            },
+        ){
+            Ok(backing) => backing,
+            Err(_) => return Err(TokenFactoryError::CustomError { val: String::from("Failed to query the Mars Vault Token for the backing amount in unloop reply") }),
+        };
+
+        //Send the deposit tokens to the user
+        let send_deposit_to_user_msg: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: unloop_props.clone().sender,
+            amount: vec![Coin {
+                denom: config.deposit_token.deposit_token.clone(),
+                amount: vt_backing - Uint128::one(), //Vault rounding error
+            }],
+        });
+        msgs.push(SubMsg::new(send_deposit_to_user_msg));
     }
+
     //Create Response
     let res = Response::new()
         .add_attribute("method", "unloop_cdp")
@@ -1094,9 +1129,9 @@ fn exit_vault(
         msgs.push(unloop_to_withdraw);
     }
 
-    //Reset Unloop Props
+    //Reset & Set Sender for Unloop Props
     UNLOOP_PROPS.save(deps.storage, &UnloopProps {
-        sender: String::from(""),
+        sender: info.sender.clone().to_string(),
         owned_collateral: Uint128::zero(),
         debt_to_clear: Uint128::zero(),
         loop_count: 0,
@@ -1153,7 +1188,7 @@ fn exit_vault(
     let res = Response::new()
         .add_attribute("method", "exit_vault")
         .add_attribute("vault_tokens", vault_tokens)
-        .add_attribute("deposit_tokens_withdrawn", deposit_tokens_to_withdraw)
+        .add_attribute("deposit_tokens_withdrawn_to_exit_with", deposit_tokens_to_withdraw)
         .add_messages(msgs);
 
     Ok(res)
@@ -1855,7 +1890,7 @@ fn handle_unloop_reply(
                     Ok(backing) => backing,
                     Err(_) => return Err(StdError::GenericErr { msg: String::from("Failed to query the Mars Vault Token for the backing amount in unloop reply") }),
                 };
-
+                panic!("sender: {:?}", unloop_props.sender);
                 //Send the deposit tokens to the user
                 let send_deposit_to_user_msg: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
                     to_address: unloop_props.clone().sender,
