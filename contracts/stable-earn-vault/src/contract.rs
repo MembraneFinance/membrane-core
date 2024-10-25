@@ -473,6 +473,11 @@ fn unloop_cdp(
         };        
     }
 
+    //if unloop sender is the contract, error
+    if unloop_props.sender == env.contract.address {
+        return Err(TokenFactoryError::CustomError { val: String::from("Exit vault recipient was set as the contract incorrectly, check for faulty code") });
+    }
+
      
     //To exit without leaving remaining depositors with liabilities, the exitooor must unloop the debt they owe as well.
     // Ex: $100 collateral --- $50 debt = $50 liquid value (deposit value). If all $50 wanted to exit, the vault would fully unloop.
