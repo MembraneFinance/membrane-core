@@ -15,8 +15,6 @@ pub struct TokenRateAssurance {
 #[cw_serde]
 pub struct UnloopProps {
     pub sender: String,
-    pub pre_exit_deposit_token_balance: Uint128,
-    pub post_exit_deposit_token_balance: Uint128,
     pub owned_collateral: Uint128,
     pub debt_to_clear: Uint128,
     pub loop_count: u64,

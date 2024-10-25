@@ -397,10 +397,6 @@ fn calc_mintable(
 //..to withdraw for a user
 //NOTE: 
 //- Accrue beforehand if trying to fully unloop
-//- All exits unloop at least once to ensure the vault has enough LTV space to cover the minimum debt in a single loop at all times. 
-//..this is inefficient and can be changed to allow regular withdrawals until the minimum liquid value is reached ($91) (todo!): TO ADD
-//POST LOOP NOTES:
-// - Bc we only loop once, as long as our market price ceiling to start is at most the peg, we'll never make a trade more than, 100% + slippage, which is covered for by the entry fee.
 fn unloop_cdp(
     deps: DepsMut,
     env: Env,
