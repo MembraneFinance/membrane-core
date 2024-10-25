@@ -1155,7 +1155,7 @@ fn exit_vault(
         };
         //Send the deposit tokens to the user
         let send_deposit_to_user_msg: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
-            to_address: unloop_props.clone().sender,
+            to_address: info.clone().sender.to_string(),
             amount: vec![Coin {
                 denom: config.deposit_token.deposit_token.clone(),
                 amount: vt_backing - Uint128::one(), //Vault rounding error
