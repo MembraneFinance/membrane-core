@@ -164,7 +164,7 @@ fn update_config(
         }
         //If its already in the list, update the discount.
         //Else, add it
-        if let Some((index, discount)) = static_discounts.clone().into_iter().enumerate().find(|(_, diss)| diss.user == new_discount.user){
+        if let Some((index, _)) = static_discounts.clone().into_iter().enumerate().find(|(_, diss)| diss.user == new_discount.user){
             static_discounts[index] = new_discount;
         } else {
             static_discounts.push(new_discount);

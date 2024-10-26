@@ -18,7 +18,7 @@ use membrane::types::{
 use membrane::osmosis_proxy::ExecuteMsg as OP_ExecuteMsg;
 
 use crate::error::ContractError;
-use crate::rates::external_accrue_call;
+use crate::rates::{accrue, external_accrue_call};
 use crate::risk_engine::assert_basket_assets;
 use crate::positions::{
     deposit,
@@ -589,18 +589,21 @@ fn duplicate_asset_check(assets: Vec<Asset>) -> Result<(), ContractError> {
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
-      //Set redemption info for position 433    
-      edit_redemption_info(
-        deps.storage,
-        Addr::unchecked("osmo1vf6e300hv2qe7r5rln8deft45ewgyytjnwfrdfcv5rgzrfy0s6cswjqf9r"),
-        vec![Uint128::new(433u128)],
-        Some(true),
-        Some(1),
-        Some(Decimal::one()),
-        None,
-        true,
-    )?;
+pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
+      //accrue position 433
+    let position_owner = Addr::unchecked("osmo1vf6e300hv2qe7r5rln8deft45ewgyytjnwfrdfcv5rgzrfy0s6cswjqf9r");
+
+    let config = CONFIG.load(deps.storage)?;
+    let mut position =    &mut POSITIONS.load(deps.storage, position_owner.clone())?[0];
+    let mut basket = &mut BASKET.load(deps.storage)?;
+
+    accrue(
+        deps.storage, 
+        deps.querier, env.clone(), 
+        config,
+        position,
+        basket,
+        String::from("osmo1vf6e300hv2qe7r5rln8deft45ewgyytjnwfrdfcv5rgzrfy0s6cswjqf9r"), false)?;
     
     //Return response
     Ok(Response::default())

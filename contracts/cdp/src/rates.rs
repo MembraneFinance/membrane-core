@@ -4,7 +4,7 @@ use std::str::FromStr;
 use cosmwasm_std::{attr, Addr, Api, Decimal, DepsMut, Env, MessageInfo, Order, QuerierWrapper, Response, StdError, StdResult, Storage, Uint128};
 
 use membrane::cdp::Config;
-use membrane::system_discounts::QueryMsg as DiscountQueryMsg;
+use membrane::system_discounts::{QueryMsg as DiscountQueryMsg, UserDiscountResponse};
 use membrane::types::{cAsset, Basket, Position, Rate, SupplyCap};
 use membrane::helpers::get_asset_liquidity;
 use membrane::math::{decimal_multiplication, decimal_division, decimal_subtraction};
@@ -649,6 +649,8 @@ pub fn accrue(
             };
         }
 
+        panic!("{}", accrued_interest);
+
         //Add accrued interest to the basket's pending revenue
         basket.pending_revenue += accrued_interest;
 
@@ -670,10 +672,10 @@ fn get_discounted_interest(
     undiscounted_interest: Uint128,
 ) -> StdResult<Uint128>{
     //Get discount
-    let discount: Decimal = querier.query_wasm_smart(discounts_contract, &DiscountQueryMsg::UserDiscount { user })?;
+    let discount: UserDiscountResponse = querier.query_wasm_smart(discounts_contract, &DiscountQueryMsg::UserDiscount { user })?;
     
     let discounted_interest = {
-        let percent_of_interest = decimal_subtraction(Decimal::one(), discount)?;
+        let percent_of_interest = decimal_subtraction(Decimal::one(), discount.discount)?;
         decimal_multiplication(Decimal::from_ratio(undiscounted_interest, Uint128::one()), percent_of_interest)?
     } * Uint128::one();
     
