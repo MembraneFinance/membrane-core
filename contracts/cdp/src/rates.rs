@@ -649,7 +649,7 @@ pub fn accrue(
             };
         }
 
-        panic!("{}", accrued_interest);
+        // panic!("{}", accrued_interest);
 
         //Add accrued interest to the basket's pending revenue
         basket.pending_revenue += accrued_interest;
