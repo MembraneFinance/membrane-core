@@ -12,6 +12,7 @@ use cw2::set_contract_version;
 use membrane::helpers::get_asset_liquidity;
 use membrane::math::{decimal_multiplication, decimal_division};
 use osmosis_std::types::osmosis::gamm::v1beta1::GammQuerier;
+use osmosis_std::types::osmosis::poolmanager::v1beta1::PoolmanagerQuerier;
 use osmosis_std::types::osmosis::incentives::MsgCreateGauge;
 
 use crate::error::TokenFactoryError;
@@ -807,8 +808,12 @@ fn get_pool_state(
     deps: Deps,
     pool_id: u64,
 ) -> StdResult<PoolStateResponse> {
-    let liquidity_res: osmosis_std::types::osmosis::gamm::v1beta1::QueryTotalPoolLiquidityResponse = GammQuerier::new(&deps.querier).total_pool_liquidity(pool_id)?;
-    let shares_res: osmosis_std::types::osmosis::gamm::v1beta1::QueryTotalSharesResponse = GammQuerier::new(&deps.querier).total_shares(pool_id)?;
+    let liquidity_res: osmosis_std::types::osmosis::poolmanager::v1beta1::TotalPoolLiquidityResponse = PoolmanagerQuerier::new(&deps.querier).total_pool_liquidity(pool_id)?;
+    let shares_res: osmosis_std::types::osmosis::gamm::v1beta1::QueryTotalSharesResponse = match GammQuerier::new(&deps.querier).total_shares(pool_id){
+        Ok(res) => res,
+        //We return None as it'll error for CL pools but I'm pretty sure we need this query for GAMM pricing in the oracle
+        Err(_) => osmosis_std::types::osmosis::gamm::v1beta1::QueryTotalSharesResponse { total_shares: None }
+    };
         
     Ok(PoolStateResponse { 
         assets: liquidity_res.liquidity, 

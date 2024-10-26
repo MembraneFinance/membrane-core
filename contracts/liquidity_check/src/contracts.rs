@@ -280,7 +280,7 @@ fn get_liquidity(deps: Deps, asset: AssetInfo) -> StdResult<LiquidityResponse> {
     let mut total_pooled = Uint128::zero();
     
     for info in liq_info.pool_infos {
-        //Set ID and liquidity multiplier
+        //Set ID and liquidity multiplier 
         let (id, multiplier) = { 
             if let PoolType::Balancer { pool_id } = info {
                 (pool_id, Decimal::one())
