@@ -46,7 +46,12 @@ pub fn instantiate(
     //Save initial state
     CONFIG.save(deps.storage, &config)?;
     CLAIM_TRACKER.save(deps.storage, &ClaimTracker {
-        vt_claim_checkpoints: vec![],
+        vt_claim_checkpoints: vec![
+            VTClaimCheckpoint {
+                vt_claim_of_checkpoint: Uint128::new(1_000_000), //Assumes the decimal of the deposit token is 6
+                time_since_last_checkpoint: 0u64,
+            }
+        ],
         last_updated: env.block.time.seconds(),
     })?;
     VAULT_TOKEN.save(deps.storage, &Uint128::zero())?;
@@ -132,13 +137,13 @@ fn rate_assurance(
 
     //Calc the rate of deposit tokens to vault tokens
     let vtokens_per_one = calculate_vault_tokens(
-        Uint128::new(1_000_000), 
+        Uint128::new(1_000_000_000_000), 
         total_deposit_tokens.clone(),
         total_vault_tokens
     )?;
     //Calc the rate of vault tokens to deposit tokens
     let btokens_per_one = calculate_base_tokens(
-        Uint128::new(1_000_000), 
+        Uint128::new(1_000_000_000_000), 
         total_deposit_tokens, 
         total_vault_tokens
     )?;
@@ -196,12 +201,12 @@ fn enter_vault(
     let pre_deposit_total_deposit_tokens = total_deposit_tokens - deposit_amount;
     //Calc & save token rates
     let pre_vtokens_per_one = calculate_vault_tokens(
-        Uint128::new(1_000_000), 
+        Uint128::new(1_000_000_000_000), 
         pre_deposit_total_deposit_tokens, 
         total_vault_tokens
     )?;
     let pre_btokens_per_one = calculate_base_tokens(
-        Uint128::new(1_000_000), 
+        Uint128::new(1_000_000_000_000), 
         pre_deposit_total_deposit_tokens, 
         total_vault_tokens
     )?;
@@ -269,6 +274,7 @@ fn enter_vault(
 
     //Send the deposit tokens to the yield strategy
     if !deposit_sent_to_yield.is_zero() {
+        //Send deopsit
         let send_deposit_to_yield_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: config.stability_pool_contract.to_string(),
             msg: to_json_binary(&StabilityPoolExecuteMsg::Deposit { user: None })?,
@@ -278,6 +284,14 @@ fn enter_vault(
             }],
         });
         msgs.push(send_deposit_to_yield_msg);
+
+        //Automatically withdraw to stay unstaked & liquid
+        let withdraw_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: config.stability_pool_contract.to_string(),
+            msg: to_json_binary(&StabilityPoolExecuteMsg::Withdraw { amount: deposit_sent_to_yield })?,
+            funds: vec![],
+        });
+        msgs.push(withdraw_msg);
     }
 
     //Add rate assurance callback msg
@@ -360,12 +374,12 @@ fn exit_vault(
     let total_vault_tokens = VAULT_TOKEN.load(deps.storage)?;
     //Calc & save token rates
     let pre_vtokens_per_one = calculate_vault_tokens(
-        Uint128::new(1_000_000), 
+        Uint128::new(1_000_000_000_000), 
         total_deposit_tokens, 
         total_vault_tokens
     )?;
     let pre_btokens_per_one = calculate_base_tokens(
-        Uint128::new(1_000_000), 
+        Uint128::new(1_000_000_000_000), 
         total_deposit_tokens, 
         total_vault_tokens
     )?;
@@ -400,8 +414,7 @@ fn exit_vault(
         contract_addr: env.contract.address.to_string(),
         msg: to_json_binary(&ExecuteMsg::RateAssurance { })?,
         funds: vec![],
-    });
-    
+    });    
 
     //Parse deposits and calculate the amount of deposits that are withdrawable
     let withdrawable_amount = asset_pool.deposits.clone().into_iter()
@@ -665,7 +678,7 @@ fn crank_realized_apr(
     CONFIG.save(deps.storage, &config)?;
     //Calc the rate of vault tokens to deposit tokens
     let btokens_per_one = calculate_base_tokens(
-        Uint128::new(1_000_000), 
+        Uint128::new(1_000_000_000_000), 
         total_deposit_tokens, 
         total_vault_tokens
     )?;
@@ -683,7 +696,7 @@ fn crank_realized_apr(
         return Ok(Response::new().add_attributes(vec![
             attr("method", "crank_realized_apr"),
             attr("no_change_to_conversion_rate", btokens_per_one),
-            attr("added_time_to__checkpoint", time_since_last_checkpoint.to_string())
+            attr("added_time_to_checkpoint", time_since_last_checkpoint.to_string())
         ]));
     }
 
@@ -1010,7 +1023,7 @@ fn handle_compound_reply(
             
             //Calc the rate of vault tokens to deposit tokens
             let btokens_per_one = calculate_base_tokens(
-                Uint128::new(1_000_000), 
+                Uint128::new(1_000_000_000_000), 
                 total_deposit_tokens, 
                 total_vault_tokens
             )?;
@@ -1057,5 +1070,17 @@ fn handle_compound_reply(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
+    //Load claim tracker
+    let mut claim_tracker = CLAIM_TRACKER.load(deps.storage)?;
+
+    claim_tracker.vt_claim_checkpoints = vec![
+        VTClaimCheckpoint {
+            vt_claim_of_checkpoint: Uint128::new(1_000_000),
+            time_since_last_checkpoint: 0u64,
+        }
+    ];
+
+    //Set first claim checkpoint
+    CLAIM_TRACKER.save(deps.storage, &claim_tracker)?;
     Ok(Response::default())
 }
