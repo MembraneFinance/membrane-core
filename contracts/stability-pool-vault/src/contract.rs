@@ -135,12 +135,6 @@ fn rate_assurance(
 
     let total_deposit_tokens = get_total_deposit_tokens(deps.as_ref(), env.clone(), config.clone())?;
 
-    //Calc the rate of deposit tokens to vault tokens
-    let vtokens_per_one = calculate_vault_tokens(
-        Uint128::new(1_000_000_000_000), 
-        total_deposit_tokens.clone(),
-        total_vault_tokens
-    )?;
     //Calc the rate of vault tokens to deposit tokens
     let btokens_per_one = calculate_base_tokens(
         Uint128::new(1_000_000_000_000), 
@@ -149,8 +143,8 @@ fn rate_assurance(
     )?;
 
     //For deposit or withdraw, check that the rates are static 
-    if vtokens_per_one != token_rate_assurance.pre_vtokens_per_one || btokens_per_one != token_rate_assurance.pre_btokens_per_one {
-        return Err(TokenFactoryError::CustomError { val: format!("Deposit or withdraw rate assurance failed. Vtokens_per_one: {:?} --- pre-tx {:?}, BTokens_per_one: {:?} --- pre-tx: {:?}", vtokens_per_one, token_rate_assurance.pre_vtokens_per_one, btokens_per_one, token_rate_assurance.pre_btokens_per_one) });
+    if btokens_per_one != token_rate_assurance.pre_btokens_per_one {
+        return Err(TokenFactoryError::CustomError { val: format!("Deposit or withdraw rate assurance failed for base token conversion. pre: {:?} --- post: {:?}", token_rate_assurance.pre_btokens_per_one, btokens_per_one) });
     }
 
     Ok(Response::new())
@@ -200,18 +194,13 @@ fn enter_vault(
     //Update the total deposit tokens after vault tokens are minted
     let pre_deposit_total_deposit_tokens = total_deposit_tokens - deposit_amount;
     //Calc & save token rates
-    let pre_vtokens_per_one = calculate_vault_tokens(
-        Uint128::new(1_000_000_000_000), 
-        pre_deposit_total_deposit_tokens, 
-        total_vault_tokens
-    )?;
     let pre_btokens_per_one = calculate_base_tokens(
         Uint128::new(1_000_000_000_000), 
         pre_deposit_total_deposit_tokens, 
         total_vault_tokens
     )?;
     TOKEN_RATE_ASSURANCE.save(deps.storage, &TokenRateAssurance {
-        pre_vtokens_per_one,
+        pre_vtokens_per_one: Uint128::zero(),
         pre_btokens_per_one,
     })?;
     //Calculate the amount of vault tokens to mint
@@ -373,18 +362,13 @@ fn exit_vault(
     //Get the total amount of vault tokens circulating
     let total_vault_tokens = VAULT_TOKEN.load(deps.storage)?;
     //Calc & save token rates
-    let pre_vtokens_per_one = calculate_vault_tokens(
-        Uint128::new(1_000_000_000_000), 
-        total_deposit_tokens, 
-        total_vault_tokens
-    )?;
     let pre_btokens_per_one = calculate_base_tokens(
         Uint128::new(1_000_000_000_000), 
         total_deposit_tokens, 
         total_vault_tokens
     )?;
     TOKEN_RATE_ASSURANCE.save(deps.storage, &TokenRateAssurance {
-        pre_vtokens_per_one,
+        pre_vtokens_per_one: Uint128::zero(),
         pre_btokens_per_one,
     })?;
     //Calculate the amount of deposit tokens to withdraw
@@ -1070,17 +1054,5 @@ fn handle_compound_reply(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
-    //Load claim tracker
-    let mut claim_tracker = CLAIM_TRACKER.load(deps.storage)?;
-
-    claim_tracker.vt_claim_checkpoints = vec![
-        VTClaimCheckpoint {
-            vt_claim_of_checkpoint: Uint128::new(1_000_000),
-            time_since_last_checkpoint: 0u64,
-        }
-    ];
-
-    //Set first claim checkpoint
-    CLAIM_TRACKER.save(deps.storage, &claim_tracker)?;
     Ok(Response::default())
 }
