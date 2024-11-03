@@ -119,11 +119,12 @@ mod tests {
                             }
                         ],
                     })?),
-                    // SP_MockQueryMsg::UserClaims { user: _ } => Ok(to_binary(&ClaimsResponse {
-                    //     claims: vec![
-                    //         coin(10, "cdt_fulldenom"),
-                    //     ],
-                    // })?),
+                    SP_MockQueryMsg::UserClaims { user: _ } => Ok(to_binary(&ClaimsResponse {
+                        claims: vec![                            
+                            coin(10, "factory/osmo1s794h9rxggytja3a4pmwul53u98k06zy2qtrdvjnfuxruh7s8yjs6cyxgd/umbrn"),
+                            // coin(10, "cdt_fulldenom"),
+                        ],
+                    })?),
                     _ => Ok(to_binary(&{}).unwrap()),
                 }
             },

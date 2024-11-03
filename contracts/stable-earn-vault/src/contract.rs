@@ -138,7 +138,11 @@ pub fn instantiate(
         }
     })?;
     CLAIM_TRACKER.save(deps.storage, &ClaimTracker {
-        vt_claim_checkpoints: vec![],
+        vt_claim_checkpoints: vec![
+            VTClaimCheckpoint {
+                vt_claim_of_checkpoint: Uint128::new(1_000_000), //Assumes the decimal of the deposit token is 6
+                time_since_last_checkpoint: 0u64,
+            }],
         last_updated: env.block.time.seconds(),
     })?;
     //Create Denom Msg

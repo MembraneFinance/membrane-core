@@ -63,9 +63,9 @@ pub fn instantiate(
         .add_attribute("method", "instantiate")
         .add_attribute("config", format!("{:?}", config))
         .add_attribute("contract_address", env.contract.address)
-        .add_attribute("sub_denom", msg.clone().vault_subdenom)
+        .add_attribute("sub_denom", msg.clone().vault_subdenom);
     //UNCOMMENT
-        .add_message(denom_msg);
+        // .add_message(denom_msg);
     Ok(res)
 }
 
@@ -171,7 +171,13 @@ fn enter_vault(
             user: env.contract.address.to_string(),
         },
     ){
-        Ok(claims) => return Err(TokenFactoryError::ContractHasClaims { claims: claims.claims }),
+        Ok(claims) => {
+            if claims.claims.clone().into_iter().filter(|claim| claim.denom.to_string() != String::from("factory/osmo1s794h9rxggytja3a4pmwul53u98k06zy2qtrdvjnfuxruh7s8yjs6cyxgd/umbrn")).collect::<Vec<Coin>>().len() > 0 as usize {
+                return Err(TokenFactoryError::ContractHasClaims { claims: claims.claims })
+            } else {
+                ClaimsResponse { claims: vec![] }
+            }
+        },
         Err(_) => ClaimsResponse { claims: vec![] },
     };
     
@@ -225,7 +231,7 @@ fn enter_vault(
         mint_to_address: info.sender.to_string(),
     }.into();
     //UNCOMMENT
-    msgs.push(mint_vault_tokens_msg);
+    // msgs.push(mint_vault_tokens_msg);
 
     //Update the total vault tokens
     VAULT_TOKEN.save(deps.storage, &(total_vault_tokens + vault_tokens_to_distribute))?;
@@ -324,7 +330,13 @@ fn exit_vault(
             user: env.contract.address.to_string(),
         },
     ){
-        Ok(claims) => return Err(TokenFactoryError::ContractHasClaims { claims: claims.claims }),
+        Ok(claims) => {
+            if claims.claims.clone().into_iter().filter(|claim| claim.denom.to_string() != String::from("factory/osmo1s794h9rxggytja3a4pmwul53u98k06zy2qtrdvjnfuxruh7s8yjs6cyxgd/umbrn")).collect::<Vec<Coin>>().len() > 0 as usize {
+                return Err(TokenFactoryError::ContractHasClaims { claims: claims.claims })
+            } else {
+                ClaimsResponse { claims: vec![] }
+            }
+        },
         Err(_) => ClaimsResponse { claims: vec![] },
     };
 
@@ -556,15 +568,17 @@ fn claim_and_compound_liquidations(
     info: MessageInfo,
 ) -> Result<Response, TokenFactoryError> {
     let mut config = CONFIG.load(deps.storage)?;
+    let mut msgs = vec![];
 
     //Query claims from the Stability Pool
-    let claims: ClaimsResponse = deps.querier.query_wasm_smart::<ClaimsResponse>(
+    let mut claims: ClaimsResponse = deps.querier.query_wasm_smart::<ClaimsResponse>(
         config.stability_pool_contract.to_string(),
         &StabilityPoolQueryMsg::UserClaims {
             user: env.contract.address.to_string(),
         },
     )?;
-    //If there are no claims, the query will error//    
+    //If there are no claims, the query will error//
+
 
     //Claim rewards from Stability Pool
     let claim_msg = CosmosMsg::Wasm(WasmMsg::Execute {
@@ -572,6 +586,31 @@ fn claim_and_compound_liquidations(
         msg: to_json_binary(&StabilityPoolExecuteMsg::ClaimRewards { })?,
         funds: vec![]
     });
+    msgs.push(claim_msg);
+
+    
+    //If the claims include MBRN, create a burn message for it & filter it out of the swap
+    match claims.claims.clone()
+        .into_iter()
+        .enumerate()
+        .find(|(_, claim)| claim.denom.to_string() == String::from("factory/osmo1s794h9rxggytja3a4pmwul53u98k06zy2qtrdvjnfuxruh7s8yjs6cyxgd/umbrn")){
+            Some((i, claim)) => {
+                let burn_mbrn_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+                    contract_addr: config.osmosis_proxy_contract.to_string(),
+                    msg: to_json_binary(&OsmosisProxyExecuteMsg::BurnTokens { 
+                        denom: String::from("factory/osmo1s794h9rxggytja3a4pmwul53u98k06zy2qtrdvjnfuxruh7s8yjs6cyxgd/umbrn"),
+                        amount: claim.amount,
+                        burn_from_address: env.contract.address.to_string(),
+                    })?,
+                    funds: vec![],
+                });
+                msgs.push(burn_mbrn_msg);
+                //Remove the MBRN claim
+                claims.claims.remove(i);
+            },
+            None => {},
+    };
+    
 
     //Compound rewards by sending to the Router in the Osmosis proxy contract
     //...send as a submsg that checks that the contract has more of the deposit token than it started with
@@ -581,7 +620,7 @@ fn claim_and_compound_liquidations(
             token_out: config.deposit_token.clone(),
             max_slippage: Decimal::one(),
         })?,
-        funds: claims.claims,
+        funds: claims.claims.clone(),
     });
     let compound_submsg = SubMsg::reply_on_success(compound_msg, COMPOUND_REPLY_ID);
 
@@ -592,7 +631,7 @@ fn claim_and_compound_liquidations(
     //Create Response
     let res = Response::new()
         .add_attribute("method", "claim_and_compound_liquidations")
-        .add_message(claim_msg)   
+        .add_messages(msgs)   
         .add_submessage(compound_submsg);
 
     Ok(res)
