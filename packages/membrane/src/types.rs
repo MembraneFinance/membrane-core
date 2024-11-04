@@ -1033,6 +1033,12 @@ pub struct APR {
     pub negative: bool,
 }
 
+#[cw_serde]
+pub struct DepositToken {
+    pub deposit_token: String,
+    pub decimal: u32,
+}
+
 /// Earn Vault
 #[cw_serde]
 pub struct VaultInfo {

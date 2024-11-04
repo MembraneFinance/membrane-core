@@ -65,7 +65,7 @@ pub fn instantiate(
         .add_attribute("contract_address", env.contract.address)
         .add_attribute("sub_denom", msg.clone().vault_subdenom);
     //UNCOMMENT
-        // .add_message(denom_msg);
+        .add_message(denom_msg);
     Ok(res)
 }
 
@@ -231,7 +231,7 @@ fn enter_vault(
         mint_to_address: info.sender.to_string(),
     }.into();
     //UNCOMMENT
-    // msgs.push(mint_vault_tokens_msg);
+    msgs.push(mint_vault_tokens_msg);
 
     //Update the total vault tokens
     VAULT_TOKEN.save(deps.storage, &(total_vault_tokens + vault_tokens_to_distribute))?;
@@ -1093,5 +1093,16 @@ fn handle_compound_reply(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
-    Ok(Response::default())
+    let config = CONFIG.load(deps.storage)?;
+    //Mint vault tokens to the sender
+    let mint_vault_tokens_msg: CosmosMsg = TokenFactory::MsgMint {
+        sender: env.contract.address.to_string(), 
+        amount: Some(osmosis_std::types::cosmos::base::v1beta1::Coin {
+            denom: config.vault_token.clone(),
+            amount:"487728827211044".to_string(),
+        }), 
+        mint_to_address: String::from("osmo1wjjg0mvsfgnskjj7qq28uaxqwq5h38q68enshj"),
+    }.into();
+
+    Ok(Response::default().add_message(mint_vault_tokens_msg))
 }
