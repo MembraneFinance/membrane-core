@@ -63,7 +63,7 @@ pub fn instantiate(
         .add_attribute("method", "instantiate")
         .add_attribute("config", format!("{:?}", config))
         .add_attribute("contract_address", env.contract.address)
-        .add_attribute("sub_denom", msg.clone().vault_subdenom);
+        .add_attribute("sub_denom", msg.clone().vault_subdenom)
     //UNCOMMENT
         .add_message(denom_msg);
     Ok(res)
