@@ -61,7 +61,7 @@ pub fn external_accrue_call(
             config.clone(),
             &mut position,
             &mut basket, 
-            info.sender.to_string(),
+            valid_position_owner.clone().to_string(),
             false,
         )?;
 
