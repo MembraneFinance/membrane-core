@@ -14,7 +14,7 @@ use cw2::set_contract_version;
 use membrane::math::{decimal_division, decimal_multiplication, decimal_subtraction};
 
 use crate::error::TokenFactoryError;
-use crate::state::{CLAIM_TRACKER, TokenRateAssurance, UnloopProps, CONFIG, OWNERSHIP_TRANSFER, TOKEN_RATE_ASSURANCE, UNLOOP_PROPS, VAULT_TOKEN};
+use crate::state::{CLAIM_TRACKER, TokenRateAssurance, UnloopProps, CONFIG, EXIT_MESSAGE_INFO, OWNERSHIP_TRANSFER, TOKEN_RATE_ASSURANCE, UNLOOP_PROPS, VAULT_TOKEN};
 use membrane::stable_earn_vault::{Config, ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
 use membrane::mars_vault_token::{ExecuteMsg as Vault_ExecuteMsg, QueryMsg as Vault_QueryMsg};
 use membrane::cdp::{BasketPositionsResponse, CollateralInterestResponse, ExecuteMsg as CDP_ExecuteMsg, InterestResponse, PositionResponse, QueryMsg as CDP_QueryMsg};
@@ -35,6 +35,7 @@ const CDP_REPLY_ID: u64 = 2u64;
 const LOOP_REPLY_ID: u64 = 3u64;
 const UNLOOP_REPLY_ID: u64 = 4u64;
 const EXIT_VAULT_STRAT_REPLY_ID: u64 = 5u64;
+const INITIATE_EXIT_REPLY_ID: u64 = 6u64;
 
 //Constants
 const SECONDS_PER_DAY: u64 = 86_400u64;
@@ -193,7 +194,7 @@ pub fn execute(
             vault_cost_index
         } => update_config(deps, info, owner, cdp_contract_addr, mars_vault_addr, osmosis_proxy_contract_addr, oracle_contract_addr, withdrawal_buffer, deposit_cap, swap_slippage, vault_cost_index),
         ExecuteMsg::EnterVault { } => enter_vault(deps, env, info),
-        ExecuteMsg::ExitVault {  } => exit_vault(deps, env, info),
+        ExecuteMsg::ExitVault {  } => accrue_before_exit(deps, env, info),
         ExecuteMsg::UnloopCDP { desired_collateral_withdrawal } => unloop_cdp(deps, env, info, desired_collateral_withdrawal),
         ExecuteMsg::LoopCDP { max_mint_amount } => loop_cdp(deps, env, info, max_mint_amount),
         ExecuteMsg::CrankRealizedAPR { } => crank_realized_apr(deps, env, info),
@@ -203,7 +204,38 @@ pub fn execute(
     }
 }
 
+fn accrue_before_exit(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+) -> Result<Response, TokenFactoryError> {
+    //Load config
+    let config = CONFIG.load(deps.storage)?;
 
+    //Save Message Info for Exit vault
+    EXIT_MESSAGE_INFO.save(deps.storage, &info)?;
+
+    //Create accrue msg
+    let accrue_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+        contract_addr: config.cdp_contract_addr.to_string(),
+        msg: to_json_binary(&CDP_ExecuteMsg::Accrue { 
+            position_owner: None, 
+            position_ids: vec![config.cdp_position_id] 
+        }
+        )?,
+        funds: vec![],
+    });
+    let accrue_submsg = SubMsg::reply_on_success(accrue_msg, INITIATE_EXIT_REPLY_ID);
+
+    //Return
+    Ok(Response::new()
+    .add_attributes(vec![
+        attr("method","accrue_before_exit"),
+        attr("position", config.cdp_position_id),
+        attr("message_info", format!("{:?}", info))
+    ]).add_submessage(accrue_submsg))
+
+}
 
 //LOOP NOTES: 
 // - Loop to leave a 101 CDT LTV gap to allow easier unlooping under the minimum
@@ -400,7 +432,7 @@ fn calc_mintable(
 //Unloop the vaults CDP position
 //..to withdraw for a user
 //NOTE: 
-//- Accrue beforehand if trying to fully unloop
+//- Contract accrues before all exits
 fn unloop_cdp(
     deps: DepsMut,
     env: Env,
@@ -1060,23 +1092,24 @@ fn enter_vault(
 fn exit_vault(
     deps: DepsMut,
     env: Env,
-    info: MessageInfo,
-) -> Result<Response, TokenFactoryError> {
+) -> StdResult<Response> {
+    //Load State
     let mut config = CONFIG.load(deps.storage)?;
+    let info = EXIT_MESSAGE_INFO.load(deps.storage)?;
     let mut msgs: Vec<CosmosMsg> = vec![];
     
     //Assert the only token sent is the vault token
     if info.funds.len() != 1 {
-        return Err(TokenFactoryError::CustomError { val: format!("More than 1 asset was sent, this function only accepts the vault token: {:?}", config.clone().vault_token) });
+        return Err(StdError::GenericErr { msg: format!("More than 1 asset was sent, this function only accepts the vault token: {:?}", config.clone().vault_token) });
     }
     if info.funds[0].denom != config.vault_token {
-        return Err(TokenFactoryError::CustomError { val: format!("The wrong asset was sent ({:?}), this function only accepts the vault token: {:?}", info.funds[0].denom, config.clone().vault_token) });
+        return Err(StdError::GenericErr { msg: format!("The wrong asset was sent ({:?}), this function only accepts the vault token: {:?}", info.funds[0].denom, config.clone().vault_token) });
     }
 
     //Get the amount of vault tokens sent
     let vault_tokens = info.funds[0].amount;
     if vault_tokens.is_zero() {
-        return Err(TokenFactoryError::CustomError { val: String::from("Need to send more than 0 vault tokens") });
+        return Err(StdError::GenericErr { msg: String::from("Need to send more than 0 vault tokens") });
     }
    
     //Get total deposit tokens
@@ -1108,7 +1141,7 @@ fn exit_vault(
         &Vault_QueryMsg::DepositTokenConversion { deposit_token_amount: deposit_tokens_to_withdraw },
     ){
         Ok(vault_tokens) => vault_tokens,
-        Err(_) => return Err(TokenFactoryError::CustomError { val: String::from("Failed to query the Mars Vault Token for the deposit token conversion amount") }),
+        Err(_) => return Err(StdError::GenericErr { msg: String::from("Failed to query the Mars Vault Token for the deposit token conversion amount") }),
     };
         
     //Get the amount of vault tokens in the contract
@@ -1156,7 +1189,7 @@ fn exit_vault(
             },
         ){
             Ok(backing) => backing,
-            Err(_) => return Err(TokenFactoryError::CustomError { val: String::from("Failed to query the Mars Vault Token for the backing amount in unloop reply") }),
+            Err(_) => return Err(StdError::GenericErr { msg: String::from("Failed to query the Mars Vault Token for the backing amount in unloop reply") }),
         };
         //Send the deposit tokens to the user
         let send_deposit_to_user_msg: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
@@ -1210,7 +1243,7 @@ fn exit_vault(
     //Update the total vault tokens
     let new_vault_token_supply = match total_vault_tokens.checked_sub(vault_tokens){
         Ok(v) => v,
-        Err(_) => return Err(TokenFactoryError::CustomError { val: format!("Failed to subtract vault token total supply: {} - {}", total_vault_tokens, vault_tokens) }),
+        Err(_) => return Err(StdError::GenericErr { msg: format!("Failed to subtract vault token total supply: {} - {}", total_vault_tokens, vault_tokens) }),
     };
     VAULT_TOKEN.save(deps.storage, &new_vault_token_supply)?;
        
@@ -1786,6 +1819,7 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response> {
         LOOP_REPLY_ID => handle_loop_reply(deps, env, msg),
         UNLOOP_REPLY_ID => handle_unloop_reply(deps, env, msg),
         EXIT_VAULT_STRAT_REPLY_ID => handle_exit_deposit_token_vault_reply(deps, env, msg),
+        INITIATE_EXIT_REPLY_ID => exit_vault(deps, env),
         id => Err(StdError::generic_err(format!("invalid reply id: {}", id))),
     }
 } 

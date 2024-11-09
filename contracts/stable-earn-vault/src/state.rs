@@ -1,6 +1,6 @@
 use cosmwasm_schema::cw_serde;
 
-use cosmwasm_std::{Addr, Decimal, Uint128};
+use cosmwasm_std::{Addr, Decimal, MessageInfo, Uint128};
 use cw_storage_plus::Item;
 
 use membrane::{oracle::PriceResponse, stable_earn_vault::Config};
@@ -30,6 +30,7 @@ pub const VAULT_TOKEN: Item<Uint128> = Item::new("vault_token");
 pub const TOKEN_RATE_ASSURANCE: Item<TokenRateAssurance> = Item::new("token_rate_assurance");
 pub const UNLOOP_PROPS: Item<UnloopProps> = Item::new("unloop_props");
 pub const CLAIM_TRACKER: Item<ClaimTracker> = Item::new("claim_tracker");
+pub const EXIT_MESSAGE_INFO: Item<MessageInfo> = Item::new("exit_message_info");
 
 
 pub const OWNERSHIP_TRANSFER: Item<Addr> = Item::new("ownership_transfer");

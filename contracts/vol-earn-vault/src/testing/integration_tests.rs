@@ -232,10 +232,6 @@ mod tests {
             max_loan_repayment: Option<Decimal>,
             restricted_collateral_assets: Option<Vec<String>>,
         },
-        Accrue {
-            position_owner: Option<String>,
-            position_ids: Vec<Uint128>
-        },
     }
 
     #[cw_serde]    
@@ -316,9 +312,6 @@ mod tests {
                                 attr("user", USER),
                             ])
                     ),
-                    CDP_MockExecuteMsg::Accrue { position_owner, position_ids } => {
-                        Ok(Response::new())
-                    }
                 }
             },
             |_, _, _, _: CDP_MockInstantiateMsg| -> StdResult<Response> { Ok(Response::default()) },
@@ -473,9 +466,6 @@ mod tests {
                                 attr("user", USER),
                             ])
                     ),
-                    CDP_MockExecuteMsg::Accrue { position_owner, position_ids } => {
-                        Ok(Response::new())
-                    }
                 }
             },
             |_, _, _, _: CDP_MockInstantiateMsg| -> StdResult<Response> { Ok(Response::default()) },
@@ -1013,17 +1003,17 @@ mod tests {
             assert_eq!(balance, Uint128::new(13));
 
             //Exit vault handles the state updates
-            // let config: Config = app
-            //     .wrap()
-            //     .query_wasm_smart(
-            //         vault_contract.addr(),
-            //         &QueryMsg::Config {},
-            //     )
-            //     .unwrap();
-            // assert_eq!(
-            //     config.total_nonleveraged_vault_tokens,
-            //     Uint128::new(101504995)
-            // );
+            let config: Config = app
+                .wrap()
+                .query_wasm_smart(
+                    vault_contract.addr(),
+                    &QueryMsg::Config {},
+                )
+                .unwrap();
+            assert_eq!(
+                config.total_nonleveraged_vault_tokens,
+                Uint128::new(101504995)
+            );
         }
     }
 
