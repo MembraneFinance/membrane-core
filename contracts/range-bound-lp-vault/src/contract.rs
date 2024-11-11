@@ -1131,9 +1131,12 @@ fn handle_cl_position_creation_reply(
                 return Err(StdError::GenericErr { msg: String::from("No data in reply") })
             }
 
+            //Save State
+            CONFIG.save(deps.storage, &config)?;
+
             //Create Response
             let res = Response::new()
-                .add_attribute("method", "handle_compound_reply")
+                .add_attribute("method", "handle_creation_reply")
                 .add_attribute("cl_position_ids", format!("{:?}", config.range_position_ids));
 
             return Ok(res);
@@ -1145,6 +1148,17 @@ fn handle_cl_position_creation_reply(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
-   
+    //Load config
+    let mut config = CONFIG.load(deps.storage)?;
+
+    //Set range position IDs
+    config.range_position_ids = RangePositions {
+        ceiling: 9401436,
+        floor: 9401437,
+    };
+
+    //Save config
+    CONFIG.save(deps.storage, &config)?;
+
     Ok(Response::default())
 }
