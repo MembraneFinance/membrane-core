@@ -15,7 +15,7 @@ pub mod stability_pool_vault;
 pub mod mars_vault_token;
 pub mod stable_earn_vault;
 pub mod vol_earn_vault;
-pub mod compounding_lp_vault;
+pub mod range_bound_lp_vault;
 pub mod mars_redbank;
 pub mod staking;
 pub mod margin_proxy;

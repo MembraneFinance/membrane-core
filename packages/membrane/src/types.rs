@@ -1046,3 +1046,28 @@ pub struct VaultInfo {
     pub deposit_token: String,
     pub vault_token: String
 }
+
+/// Range Bound LP Vault
+#[cw_serde]
+pub struct RangeTokens {
+    pub ceiling_deposit_token: String,
+    pub floor_deposit_token: String
+}
+
+#[cw_serde]
+pub struct RangeBounds {
+    pub ceiling: RangeTicks,
+    pub floor: RangeTicks,
+}
+
+#[cw_serde]
+pub struct RangeTicks {
+    pub lower_tick: i64,
+    pub upper_tick: i64,
+}
+
+#[cw_serde]
+pub struct RangePositions {
+    pub ceiling: u64,
+    pub floor: u64,
+}

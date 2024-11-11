@@ -24,7 +24,7 @@ use membrane::stability_pool::{ClaimsResponse, ExecuteMsg as SP_ExecuteMsg, Quer
 use membrane::stability_pool_vault::{
     calculate_base_tokens, calculate_vault_tokens
 };
-use membrane::compounding_lp_vault::{ExecuteMsg as LP_ExecuteMsg, QueryMsg as LP_QueryMsg};
+use membrane::range_bound_lp_vault::{ExecuteMsg as LP_ExecuteMsg, QueryMsg as LP_QueryMsg};
 use osmosis_std::types::osmosis::tokenfactory::v1beta1::{self as TokenFactory};
 
 // version info for migration info

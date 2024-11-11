@@ -1,0 +1,2 @@
+- Commenting out MsgCreateDenom, MsgMint & MsgBurn to run tests
+- Comment mock claims response bc any claims will block enter & exit

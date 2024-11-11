@@ -940,23 +940,257 @@ fn handle_create_denom_reply(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
-    //Set 1st swp route of USDC to CDT
-    // let swap_route = SwapRoute {
-    //     token_in: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
-    //     route_out: SwapAmountInRoute {
-    //         token_out_denom: String::from("factory/osmo1s794h9rxggytja3a4pmwul53u98k06zy2qtrdvjnfuxruh7s8yjs6cyxgd/ucdt"),
-    //         pool_id: 1268u64,
-    //     },
-    // };
-    // //Set 2nd swp route of CDT to USDC
-    // let swap_route2 = SwapRoute {
-    //     token_in: String::from("factory/osmo1s794h9rxggytja3a4pmwul53u98k06zy2qtrdvjnfuxruh7s8yjs6cyxgd/ucdt"),
-    //     route_out: SwapAmountInRoute {
-    //         token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
-    //         pool_id: 1268u64,
-    //     },
-    // };
-    // //Save swap routes
-    // SWAP_ROUTES.save(deps.storage, &vec![swap_route, swap_route2])?;
+    let current_routes = SWAP_ROUTES.load(deps.storage)?;
+    let mut new_routes = vec![];
+    //Set WBTC to allBTC
+    let swap_route = SwapRoute {
+        token_in: String::from("factory/osmo1z0qrq605sjgcqpylfl4aa6s90x738j7m58wyatt0tdzflg2ha26q67k743/wbtc"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("factory/osmo1z6r6qdknhgsc0zeracktgpcxf43j6sekq07nw8sxduc9lg0qjjlqfu25e3/alloyed/allBTC"),
+            pool_id: 1868u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set allBTC to WBTC
+    let swap_route = SwapRoute {
+        token_in: String::from("factory/osmo1z6r6qdknhgsc0zeracktgpcxf43j6sekq07nw8sxduc9lg0qjjlqfu25e3/alloyed/allBTC"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("factory/osmo1z0qrq605sjgcqpylfl4aa6s90x738j7m58wyatt0tdzflg2ha26q67k743/wbtc"),
+            pool_id: 1868u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set allBTC to USDC
+    let swap_route = SwapRoute {
+        token_in: String::from("factory/osmo1z6r6qdknhgsc0zeracktgpcxf43j6sekq07nw8sxduc9lg0qjjlqfu25e3/alloyed/allBTC"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+            pool_id: 1942u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set USDC to allBTC
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("factory/osmo1z6r6qdknhgsc0zeracktgpcxf43j6sekq07nw8sxduc9lg0qjjlqfu25e3/alloyed/allBTC"),
+            pool_id: 1942u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    //Set WBTC.axl to allBTC
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/D1542AA8762DB13087D8364F3EA6509FD6F009A34F00426AF9E4F9FA85CBBF1F"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("factory/osmo1z6r6qdknhgsc0zeracktgpcxf43j6sekq07nw8sxduc9lg0qjjlqfu25e3/alloyed/allBTC"),
+            pool_id: 1868u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set allBTC to WBTC.axl
+    let swap_route = SwapRoute {
+        token_in: String::from("factory/osmo1z6r6qdknhgsc0zeracktgpcxf43j6sekq07nw8sxduc9lg0qjjlqfu25e3/alloyed/allBTC"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/D1542AA8762DB13087D8364F3EA6509FD6F009A34F00426AF9E4F9FA85CBBF1F"),
+            pool_id: 1868u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    //Set OSMO to USDC
+    let swap_route = SwapRoute {
+        token_in: String::from("uosmo"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+            pool_id: 1464u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set USDC to OSMO
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("uosmo"),
+            pool_id: 1464u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    //Set stOSMO to OSMO
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/D176154B0C63D1F9C6DCFB4F70349EBF2E2B5A87A05902F57A6AE92B863E9AEC"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("uosmo"),
+            pool_id: 1252u64,
+        },
+    };
+    new_routes.push(swap_route);    
+    //Set OSMO to stOSMO
+    let swap_route = SwapRoute {
+        token_in: String::from("uosmo"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/D176154B0C63D1F9C6DCFB4F70349EBF2E2B5A87A05902F57A6AE92B863E9AEC"),
+            pool_id: 1252u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    //Set ATOM to USDC
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+            pool_id: 1282u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set USDC to ATOM
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2"),
+            pool_id: 1282u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    
+    //Set stATOM to ATOM
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/C140AFD542AE77BD7DCC83F13FDD8C5E5BB8C4929785E6EC2F4C636F98F17901"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2"),
+            pool_id: 1283u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set ATOM to stATOM
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/C140AFD542AE77BD7DCC83F13FDD8C5E5BB8C4929785E6EC2F4C636F98F17901"),
+            pool_id: 1283u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    
+    //Set USDC.axl to USDC
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/D189335C6E4A68B513C10AB227BF1C1D38C746766278BA3EEB4FB14124F1D858"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+            pool_id: 1212u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set USDC to USDC.axl
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/D189335C6E4A68B513C10AB227BF1C1D38C746766278BA3EEB4FB14124F1D858"),
+            pool_id: 1212u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    //Set WETH.axl to OSMO
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/EA1D43981D5C9A1C4AAEA9C23BB1D4FA126BA9BC7020A25E0AE4AA841EA25DC5"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("uosmo"),
+            pool_id: 1134u64,
+        },
+    };
+    new_routes.push(swap_route);    
+    //Set OSMO to WETH.axl
+    let swap_route = SwapRoute {
+        token_in: String::from("uosmo"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/EA1D43981D5C9A1C4AAEA9C23BB1D4FA126BA9BC7020A25E0AE4AA841EA25DC5"),
+            pool_id: 1134u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    //Set TIA to USDC
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/D79E7D83AB399BFFF93433E54FAA480C191248FC556924A2A8351AE2638B3877"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+            pool_id: 1247u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set USDC to TIA
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/D79E7D83AB399BFFF93433E54FAA480C191248FC556924A2A8351AE2638B3877"),
+            pool_id: 1247u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    //Set TIA to MILKTIA
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/D79E7D83AB399BFFF93433E54FAA480C191248FC556924A2A8351AE2638B3877"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("factory/osmo1f5vfcph2dvfeqcqkhetwv75fda69z7e5c2dldm3kvgj23crkv6wqcn47a0/umilkTIA"),
+            pool_id: 1475u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set MILKTIA to TIA
+    let swap_route = SwapRoute {
+        token_in: String::from("factory/osmo1f5vfcph2dvfeqcqkhetwv75fda69z7e5c2dldm3kvgj23crkv6wqcn47a0/umilkTIA"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/D79E7D83AB399BFFF93433E54FAA480C191248FC556924A2A8351AE2638B3877"),
+            pool_id: 1475u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    //Set TIA to stTIA
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/D79E7D83AB399BFFF93433E54FAA480C191248FC556924A2A8351AE2638B3877"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/698350B8A61D575025F3ED13E9AC9C0F45C89DEFE92F76D5838F1D3C1A7FF7C9"),
+            pool_id: 1428u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set stTIA to TIA
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/698350B8A61D575025F3ED13E9AC9C0F45C89DEFE92F76D5838F1D3C1A7FF7C9"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/D79E7D83AB399BFFF93433E54FAA480C191248FC556924A2A8351AE2638B3877"),
+            pool_id: 1428u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    //Set USDT.kava to USDC
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/4ABBEF4C8926DDDB320AE5188CFD63267ABBCEFC0583E4AE05D6E5AA2401DDAB"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+            pool_id: 1220u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set USDC to USDT.kava
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/4ABBEF4C8926DDDB320AE5188CFD63267ABBCEFC0583E4AE05D6E5AA2401DDAB"),
+            pool_id: 1220u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    
+
     Ok(Response::default())
 }

@@ -319,6 +319,7 @@ fn exit_vault(
     info: MessageInfo,
 ) -> Result<Response, TokenFactoryError> {
     let mut config = CONFIG.load(deps.storage)?;
+    let mut assurance_msg = vec![];
 
     //Query claims from the Stability Pool.
     //Error is there are claims.
@@ -405,12 +406,6 @@ fn exit_vault(
         .sum::<Decimal>().to_uint_floor();
 
     
-    //Instantiate rate assurance callback msg
-    let assurance = CosmosMsg::Wasm(WasmMsg::Execute {
-        contract_addr: env.contract.address.to_string(),
-        msg: to_json_binary(&ExecuteMsg::RateAssurance { })?,
-        funds: vec![],
-    });    
 
     //Parse deposits and calculate the amount of deposits that are withdrawable
     let withdrawable_amount = asset_pool.deposits.clone().into_iter()
@@ -489,6 +484,17 @@ fn exit_vault(
         //Save the updated config
         CONFIG.save(deps.storage, &config)?;
 
+        
+        //Add rate assurance callback msg if this withdrawal leaves other depositors with tokens to withdraw
+        if !new_vault_token_supply.is_zero() && total_deposit_tokens > deposit_tokens_to_withdraw {
+            //UNCOMMENT
+            assurance_msg.push(CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: env.contract.address.to_string(),
+                msg: to_json_binary(&ExecuteMsg::RateAssurance {  })?,
+                funds: vec![],
+            }));
+        } 
+
         return Ok(Response::new()
             .add_attribute("method", "exit_vault")
             .add_attribute("vault_tokens_burnt", vault_tokens_to_burn)
@@ -497,7 +503,7 @@ fn exit_vault(
             .add_message(unstake_tokens_msg)
             .add_message(send_deposit_tokens_msg)
             .add_message(send_vault_tokens_msg)
-            .add_message(assurance)
+            .add_messages(assurance_msg)
         );
     }
 
@@ -530,6 +536,16 @@ fn exit_vault(
     //Save the updated config
     CONFIG.save(deps.storage, &config)?;
 
+    //Add rate assurance callback msg if this withdrawal leaves other depositors with tokens to withdraw
+    if !new_vault_token_supply.is_zero() && total_deposit_tokens > deposit_tokens_to_withdraw {
+        //UNCOMMENT
+        assurance_msg.push(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: env.contract.address.to_string(),
+            msg: to_json_binary(&ExecuteMsg::RateAssurance {  })?,
+            funds: vec![],
+        }));
+    } 
+
     //Add the withdrawable amount to the deposit tokens to withdraw
     //bc the SP withdraws & unstakes in the same msg 
     deposit_tokens_to_withdraw += withdrawable_amount;    
@@ -555,7 +571,7 @@ fn exit_vault(
         .add_message(burn_vault_tokens_msg)
         .add_message(unstake_tokens_msg)
         .add_message(send_deposit_tokens_msg)
-        .add_message(assurance);
+        .add_messages(assurance_msg);
 
     Ok(res)
 }
