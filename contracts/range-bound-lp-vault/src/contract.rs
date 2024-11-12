@@ -32,7 +32,9 @@ const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 //Reply IDs
 const SWAP_TO_FLOOR_REPLY_ID: u64 = 1u64;
 const SWAP_TO_CEILING_REPLY_ID: u64 = 2u64;
-const CL_POSITION_CREATION_REPLY_ID: u64 = 3u64;
+const ADD_TO_FLOOR_REPLY_ID: u64 = 3u64;
+const ADD_TO_CEILING_REPLY_ID: u64 = 4u64;
+const CL_POSITION_CREATION_REPLY_ID: u64 = 5u64;
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -766,7 +768,7 @@ fn manage_vault(
                 token_min_amount1: String::from("0"),
             }.into();
             //Add to msgs
-            msgs.push(SubMsg::new(add_to_floor));
+            msgs.push(SubMsg::reply_on_success(add_to_floor, ADD_TO_FLOOR_REPLY_ID));
         }
 
         //Set swappable amount based on the rebalance_sale_max
@@ -812,7 +814,7 @@ fn manage_vault(
                 token_min_amount1: String::from("0"),
             }.into();
             //Add to msgs
-            msgs.push(SubMsg::new(add_to_ceiling));
+            msgs.push(SubMsg::reply_on_success(add_to_ceiling, ADD_TO_CEILING_REPLY_ID));
         }
 
         //Set swappable amount based on the rebalance_sale_max
@@ -1047,6 +1049,8 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response> {
     match msg.id {
         SWAP_TO_FLOOR_REPLY_ID => handle_swap_to_floor(deps, env, msg),
         SWAP_TO_CEILING_REPLY_ID => handle_swap_to_ceiling(deps, env, msg),
+        ADD_TO_FLOOR_REPLY_ID => handle_add_to_floor_position(deps, env, msg),
+        ADD_TO_CEILING_REPLY_ID => handle_add_to_ceiling_position(deps, env, msg),
         CL_POSITION_CREATION_REPLY_ID => handle_cl_position_creation_reply(deps, env, msg),
         id => Err(StdError::generic_err(format!("invalid reply id: {}", id))),
     }
@@ -1080,10 +1084,11 @@ fn handle_swap_to_floor(
                 token_min_amount0: String::from("0"),
                 token_min_amount1: String::from("0"),
             }.into();
+            let add_to_floor_submsg = SubMsg::reply_on_success(add_to_floor, ADD_TO_FLOOR_REPLY_ID);
 
             //Create Response
             let res = Response::new()
-                .add_message(add_to_floor)
+                .add_submessage(add_to_floor_submsg)
                 .add_attribute("method", "handle_swap_to_floor_reply")
                 .add_attribute("balance_of_floor_tokens_added_to_CL_position", balance_of_floor_tokens.to_string());
 
@@ -1093,6 +1098,46 @@ fn handle_swap_to_floor(
         Err(err) => return Err(StdError::GenericErr { msg: err }),
     }
 }
+
+
+/// Set the new position ID for the floor position
+fn handle_add_to_floor_position(
+    deps: DepsMut,
+    _env: Env,
+    msg: Reply,
+) -> StdResult<Response> {
+    match msg.result.into_result() {
+        Ok(result) => {
+            //Load state
+            let mut config = CONFIG.load(deps.storage)?;
+
+            //Parse response
+            if let Some(b) = result.data {
+                let res: CL::MsgAddToPositionResponse = match b.try_into().map_err(TokenFactoryError::Std){
+                    Ok(res) => res,
+                    Err(err) => return Err(StdError::GenericErr { msg: String::from(err.to_string()) })
+                };
+                //Save position ID
+                config.range_position_ids.floor = res.position_id;
+                
+            } else {
+                return Err(StdError::GenericErr { msg: String::from("No data in reply") })
+            }
+
+            //Save State
+            CONFIG.save(deps.storage, &config)?;
+
+            //Create Response
+            return Ok(Response::new()
+                .add_attribute("method", "handle_add_to_floor_position_reply")
+                .add_attribute("floor_position_id", config.range_position_ids.floor.to_string()))
+            
+
+        } //We only reply on success
+        Err(err) => return Err(StdError::GenericErr { msg: err }),
+    }
+}
+
 
 /// Get the tokens swapped to the ceiling & add them to the ceiling position
 fn handle_swap_to_ceiling(
@@ -1123,14 +1168,53 @@ fn handle_swap_to_ceiling(
                 token_min_amount0: String::from("0"),
                 token_min_amount1: String::from("0"),
             }.into();
+            let add_to_ceiling_submsg = SubMsg::reply_on_success(add_to_ceiling, ADD_TO_CEILING_REPLY_ID);
 
             //Create Response
             let res = Response::new()
-                .add_message(add_to_ceiling)
+                .add_submessage(add_to_ceiling_submsg)
                 .add_attribute("method", "handle_swap_to_ceiling_reply")
                 .add_attribute("balance_of_ceiling_tokens_added_to_CL_position", balance_of_ceiling_tokens.to_string());
 
             return Ok(res);
+
+        } //We only reply on success
+        Err(err) => return Err(StdError::GenericErr { msg: err }),
+    }
+}
+
+/// Set the new position ID for the ceiling position
+fn handle_add_to_ceiling_position(
+    deps: DepsMut,
+    _env: Env,
+    msg: Reply,
+) -> StdResult<Response> {
+    match msg.result.into_result() {
+        Ok(result) => {
+            //Load state
+            let mut config = CONFIG.load(deps.storage)?;
+
+            //Parse response
+            if let Some(b) = result.data {
+                let res: CL::MsgAddToPositionResponse = match b.try_into().map_err(TokenFactoryError::Std){
+                    Ok(res) => res,
+                    Err(err) => return Err(StdError::GenericErr { msg: String::from(err.to_string()) })
+                };
+                //Save position ID
+                config.range_position_ids.ceiling = res.position_id;
+                
+            } else {
+                return Err(StdError::GenericErr { msg: String::from("No data in reply") })
+            }
+
+            //Save State
+            CONFIG.save(deps.storage, &config)?;
+
+            //Create Response
+            return Ok(Response::new()
+                .add_attribute("method", "handle_add_to_ceiling_position_reply")
+                .add_attribute("ceiling_position_id", config.range_position_ids.ceiling.to_string()))
+            
 
         } //We only reply on success
         Err(err) => return Err(StdError::GenericErr { msg: err }),
@@ -1181,6 +1265,17 @@ fn handle_cl_position_creation_reply(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
+    //Load config
+    let mut config = CONFIG.load(deps.storage)?;
+
+    //Set range position IDs
+    config.range_position_ids = RangePositions {
+        ceiling: 9405325,
+        floor: 9401437,
+    };
+
+    //Save config
+    CONFIG.save(deps.storage, &config)?;
 
     Ok(Response::default())
 }
