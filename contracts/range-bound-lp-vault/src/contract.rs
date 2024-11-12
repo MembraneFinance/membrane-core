@@ -441,7 +441,11 @@ fn enter_vault(
     let total_vault_tokens = VAULT_TOKEN.load(deps.storage)?;
     //Update the total deposit tokens after vault tokens are minted 
     //..because the total_deposit_tokens counts the deposit tokens in the contract
-    let pre_deposit_total_deposit_tokens = total_deposit_tokens - normalized_deposit_amount;
+    let mut pre_deposit_total_deposit_tokens = total_deposit_tokens - normalized_deposit_amount;
+    //if this is the first deposit, set the total to 0 bc it'll be non-zero due to the init deposit. This results in 0 VTs to mint.
+    if total_vault_tokens.is_zero() {
+        pre_deposit_total_deposit_tokens = Uint128::zero();
+    }
     //Calc & save token rates
     let pre_btokens_per_one = calculate_base_tokens(
         Uint128::new(1_000_000_000_000), 
@@ -481,11 +485,13 @@ fn enter_vault(
     CONFIG.save(deps.storage, &config)?;
 
     //Add rate assurance callback msg
-    msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
-        contract_addr: env.contract.address.to_string(),
-        msg: to_json_binary(&ExecuteMsg::RateAssurance { })?,
-        funds: vec![],
-    }));
+    if !total_vault_tokens.is_zero() {
+        msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: env.contract.address.to_string(),
+            msg: to_json_binary(&ExecuteMsg::RateAssurance { })?,
+            funds: vec![],
+        }));
+    }
 
     //Create Response
     let res = Response::new()
