@@ -2004,7 +2004,7 @@ fn get_user_claimables(
                 DELEGATIONS.update(storage, delegate.delegate.clone(), |delegation_info| -> StdResult<DelegationInfo>{
                     match delegation_info {
                         Some(mut delegation_info) => {
-                            //Filter out the delegation
+                            //Find the delegation
                             if let Some((i, _)) = delegation_info.delegated.clone()
                                 .into_iter()
                                 .enumerate()
@@ -2024,7 +2024,7 @@ fn get_user_claimables(
                 DELEGATIONS.update(storage, user.clone(), |delegation_info| -> StdResult<DelegationInfo>{
                     match delegation_info {
                         Some(mut delegation_info) => {
-                            //Filter out the delegation
+                            //Find the delegation
                             if let Some((i, _)) = delegation_info.delegated_to.clone()
                                 .into_iter()
                                 .enumerate()
@@ -2221,9 +2221,9 @@ pub fn get_delegation_commission(
     delegated_to: Vec<Delegation>,
     total_rewarding_stake: Uint128,
     user_commission_rate: Decimal,
-) -> StdResult<(Decimal, Decimal)>{
+) -> StdResult<Decimal>{
     if total_rewarding_stake == Uint128::zero() || (delegated.is_empty() && delegated_to.is_empty()){
-        return Ok((Decimal::zero(), Decimal::zero()))
+        return Ok(Decimal::zero())
     }
 
     //Initialize the total the amount of MBRN delegated_to a delegate
@@ -2271,24 +2271,7 @@ pub fn get_delegation_commission(
     //Calculate the per deposit commission rate
     let per_deposit_commission_subtraction = decimal_multiplication(total_delegated_ratio, commission_rate)?;
 
-    
-    ///////Now do the same for delegated, to add to this deposit's claimables///////
-    /// Don't need an average commission bc its the commission of the User
-    /// //Initialize the total the amount of MBRN delegated to the depositor
-    let total_delegated: Uint128 = delegated.clone()
-        .into_iter()
-        .map(|delegation| delegation.amount)
-        .collect::<Vec<Uint128>>()
-        .iter()
-        .sum();
-    
-    //Calc the ratio of the total delegated_to to the total stake
-    let total_delegated_ratio = Decimal::from_ratio(total_delegated, total_rewarding_stake);
-
-    //Calculate the per deposit commission rate
-    let per_deposit_commission_addition = decimal_multiplication(total_delegated_ratio, user_commission_rate)?;
-
-    Ok((per_deposit_commission_subtraction, per_deposit_commission_addition))
+    Ok(per_deposit_commission_subtraction)
 }
 
 /// Get deposit's claimable fee assets based on which FeeEvents it experienced
@@ -2325,7 +2308,7 @@ pub fn get_deposit_claimables(
         .collect::<Vec<Delegation>>();
     // println!("total_rewarding stake {:?}, {:?}, {:?}", total_rewarding_stake, delegated.clone(), delegated_to.clone());
     //Get commission rates per deposit
-    let (per_deposit_commission_subtraction, per_deposit_commission_addition) = get_delegation_commission(
+    let (per_deposit_commission_subtraction) = get_delegation_commission(
         storage, 
         delegated.clone(), 
         delegated_to.clone(), 
@@ -2343,16 +2326,8 @@ pub fn get_deposit_claimables(
         )?.to_uint_floor();
     }
 
-    //Add commission to deposit
-    if per_deposit_commission_addition > Decimal::zero() {
-        deposit.amount = decimal_multiplication(
-            (Decimal::one() + per_deposit_commission_addition), 
-            Decimal::from_ratio(deposit.amount, Uint128::one())
-        )?.to_uint_floor();
-    }
-
     //Calc & condense claimables
-    //due to the above, claims incorporate the delegation commissions
+    //due to the above, claims incorporate the delegation commissions (additions are done separately)
     for event in events_experienced {
         //Check if asset is already in the list of claimables and add accordingly
         match claimables
@@ -2421,6 +2396,8 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
+    //Remove fee events
+    FEE_EVENTS.remove(deps.storage);
 
     Ok(Response::default())
 }
