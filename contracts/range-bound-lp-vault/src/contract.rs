@@ -530,7 +530,7 @@ fn exit_vault(
         return Err(TokenFactoryError::ZeroDepositTokens {});
     }
 
-    let ceiling_liquidity = Decimal::from_str(&ceiling_position.position.unwrap().liquidityy).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
+    let ceiling_liquidity = Decimal::from_str(&ceiling_position.position.unwrap().liquidity).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
     let floor_liquidity = Decimal::from_str(&floor_position.position.unwrap().liquidity).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
 
     //Assert the only token sent is the vault token
