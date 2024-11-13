@@ -530,8 +530,8 @@ fn exit_vault(
         return Err(TokenFactoryError::ZeroDepositTokens {});
     }
 
-    let ceiling_liquidity = Decimal::from_str(&ceiling_position.position.unwrap().liquidity).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
-    let floor_liquidity = Decimal::from_str(&floor_position.position.unwrap().liquidity).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
+    let ceiling_liquidity = Decimal::from_str(&ceiling_position.position.unwrap().liquidity).unwrap();
+    let floor_liquidity = Decimal::from_str(&floor_position.position.unwrap().liquidity).unwrap();
 
     //Assert the only token sent is the vault token
     if info.funds.len() != 1 {
@@ -1271,23 +1271,23 @@ fn handle_cl_position_creation_reply(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
     // //Load config
-    // let mut config = CONFIG.load(deps.storage)?;
+    let mut config = CONFIG.load(deps.storage)?;
 
-    // //Get total_deposit_tokens & prices
-    // let (
-    //     total_deposit_tokens,
-    //     _,
-    //     _,
-    //     ceiling_position_coins,
-    //     floor_position_coins,
-    //     ceiling_position,
-    //     floor_position
-    // ) = get_total_deposit_tokens(deps.as_ref(), env.clone(), config.clone())?;
+    //Get total_deposit_tokens & prices
+    let (
+        total_deposit_tokens,
+        _,
+        _,
+        ceiling_position_coins,
+        floor_position_coins,
+        ceiling_position,
+        floor_position
+    ) = get_total_deposit_tokens(deps.as_ref(), env.clone(), config.clone())?;
 
-    // let ceiling_liquidity = Decimal::from_str(&ceiling_position.position.unwrap().liquidityy).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
-    // let floor_liquidity = Decimal::from_str(&floor_position.position.unwrap().liquidity).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
+    let ceiling_liquidity = Decimal::from_str(&ceiling_position.position.unwrap().liquidityy).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
+    let floor_liquidity = Decimal::from_str(&floor_position.position.unwrap().liquidity).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
 
-    // panic!("ceiling: {:?}, floor: {:?}", ceiling_liquidity, floor_liquidity);
+    panic!("ceiling: {:?}, floor: {:?}", ceiling_liquidity, floor_liquidity);
 
     Ok(Response::default())
 }
