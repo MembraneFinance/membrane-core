@@ -516,7 +516,6 @@ fn exit_vault(
 ) -> Result<Response, TokenFactoryError> {
     let config = CONFIG.load(deps.storage)?;
     let mut msgs = vec![];
-
     //Get total_deposit_tokens & prices
     let (
         total_deposit_tokens,
@@ -531,8 +530,8 @@ fn exit_vault(
         return Err(TokenFactoryError::ZeroDepositTokens {});
     }
 
-    let ceiling_liquidity = ceiling_position.position.unwrap().liquidity;
-    let floor_liquidity = floor_position.position.unwrap().liquidity;
+    let ceiling_liquidity = Decimal::from_str(&ceiling_position.position.unwrap().liquidityy).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
+    let floor_liquidity = Decimal::from_str(&floor_position.position.unwrap().liquidity).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
 
     //Assert the only token sent is the vault token
     if info.funds.len() != 1 {
@@ -568,11 +567,11 @@ fn exit_vault(
     ///////////////////////////////////
     //Set ceiling & floor withdrawal amount
     let ceiling_liquidity_to_withdraw = decimal_multiplication(
-        Decimal::from_str(&ceiling_liquidity).unwrap(),
+        Decimal::from_ratio(ceiling_liquidity, Uint128::one()),
         withdrawal_ratio
     )?.to_uint_floor().to_string();
     let floor_liquidity_to_withdraw = decimal_multiplication(
-        Decimal::from_str(&floor_liquidity).unwrap(), 
+        Decimal::from_ratio(floor_liquidity, Uint128::one()),
         withdrawal_ratio
     )?.to_uint_floor().to_string();
     //Withdraw liquidity from both positions
@@ -687,8 +686,8 @@ fn exit_vault(
 /// Flow: 
 /// - ClaimSpreadFees
 /// - Attempt to compound into ceiling or floor
-/// - If price is in the ceiling, swap and deposit into floor
-/// - If price is in the floor, swap and deposit into ceiling
+/// - If price is in the ceiling, swap and deposit into floor. If its above, swap to floor and deposit into both.
+/// - If price is in the floor, swap and deposit into ceiling. If its below, swap to ceiling and deposit into both.
 fn manage_vault(
     deps: DepsMut,
     env: Env,
@@ -760,7 +759,7 @@ fn manage_vault(
 
     /////Is price in the ceiling or floor?///
     //In the ceiling, so add to FLOOR
-    if cdt_price.price >= Decimal::percent(99) {
+    if cdt_price.price >= Decimal::percent(99) && cdt_price.price <= Decimal::from_str("0.993").unwrap(){
         //Add to FLOOR position
         if !total_floor_tokens.is_zero() {
             let add_to_floor: CosmosMsg = CL::MsgAddToPosition {
@@ -1272,16 +1271,23 @@ fn handle_cl_position_creation_reply(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
     //Load config
-    // let mut config = CONFIG.load(deps.storage)?;
+    let mut config = CONFIG.load(deps.storage)?;
 
-    // //Set range position IDs
-    // config.range_position_ids = RangePositions {
-    //     ceiling: 9405325,
-    //     floor: 9401437,
-    // };
+    //Get total_deposit_tokens & prices
+    let (
+        total_deposit_tokens,
+        _,
+        _,
+        ceiling_position_coins,
+        floor_position_coins,
+        ceiling_position,
+        floor_position
+    ) = get_total_deposit_tokens(deps.as_ref(), env.clone(), config.clone())?;
 
-    // //Save config
-    // CONFIG.save(deps.storage, &config)?;
+    let ceiling_liquidity = Decimal::from_str(&ceiling_position.position.unwrap().liquidityy).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
+    let floor_liquidity = Decimal::from_str(&floor_position.position.unwrap().liquidity).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
+
+    panic!("ceiling: {:?}, floor: {:?}", ceiling_liquidity, floor_liquidity);
 
     Ok(Response::default())
 }

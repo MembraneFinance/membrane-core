@@ -197,8 +197,7 @@ fn get_discount(
     
     //Load static discounts
     let static_discounts = STATIC_DISCOUNTS.load(deps.storage)?;
-    //If its already in the list, update the discount.
-    //Else, add it
+    //Return discount if it exists
     if let Some(discount) = static_discounts.into_iter().find(|diss| diss.user == user){
         return Ok(discount)
     } 
@@ -445,12 +444,5 @@ fn get_staked_MBRN_value(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
-    //initialize static discounts
-    STATIC_DISCOUNTS.save(deps.storage, &vec![
-        UserDiscountResponse {
-            user: String::from("osmo1vf6e300hv2qe7r5rln8deft45ewgyytjnwfrdfcv5rgzrfy0s6cswjqf9r"),
-            discount: Decimal::one()
-        }
-    ])?;
     Ok(Response::default())
 }
