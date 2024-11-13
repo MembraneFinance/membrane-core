@@ -5,7 +5,7 @@ use std::str::FromStr;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    attr, to_json_binary, BankMsg, Binary, Coin, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo, QuerierWrapper, Reply, Response, StdError, StdResult, SubMsg, Uint128, WasmMsg
+    attr, to_json_binary, BankMsg, Binary, Coin, CosmosMsg, Decimal, Decimal256, Deps, DepsMut, Env, MessageInfo, QuerierWrapper, Reply, Response, StdError, StdResult, SubMsg, Uint128, WasmMsg
 };
 use cw2::set_contract_version;
 use membrane::math::{decimal_multiplication, decimal_division};
@@ -566,14 +566,14 @@ fn exit_vault(
     )?;
     ///////////////////////////////////
     //Set ceiling & floor withdrawal amount
-    let ceiling_liquidity_to_withdraw = decimal_multiplication(
-        Decimal::from_ratio(ceiling_liquidity, Uint128::one()),
+    let ceiling_liquidity_to_withdraw = (decimal_multiplication(
+        ceiling_liquidity,
         withdrawal_ratio
-    )?.to_uint_floor().to_string();
-    let floor_liquidity_to_withdraw = decimal_multiplication(
-        Decimal::from_ratio(floor_liquidity, Uint128::one()),
+    )? * Uint128::new(10u64.pow(18 as u32) as u128)).to_string();
+    let floor_liquidity_to_withdraw = (decimal_multiplication(
+        floor_liquidity,
         withdrawal_ratio
-    )?.to_uint_floor().to_string();
+    )? * Uint128::new(10u64.pow(18 as u32) as u128)).to_string();
     //Withdraw liquidity from both positions
     let ceiling_position_withdraw_msg: CosmosMsg = CL::MsgWithdrawPosition {
         position_id: config.range_position_ids.ceiling,
@@ -1271,23 +1271,23 @@ fn handle_cl_position_creation_reply(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
     // //Load config
-    let mut config = CONFIG.load(deps.storage)?;
+    // let mut config = CONFIG.load(deps.storage)?;
 
-    //Get total_deposit_tokens & prices
-    let (
-        total_deposit_tokens,
-        _,
-        _,
-        ceiling_position_coins,
-        floor_position_coins,
-        ceiling_position,
-        floor_position
-    ) = get_total_deposit_tokens(deps.as_ref(), env.clone(), config.clone())?;
+    // //Get total_deposit_tokens & prices
+    // let (
+    //     total_deposit_tokens,
+    //     _,
+    //     _,
+    //     ceiling_position_coins,
+    //     floor_position_coins,
+    //     ceiling_position,
+    //     floor_position
+    // ) = get_total_deposit_tokens(deps.as_ref(), env.clone(), config.clone())?;
 
-    let ceiling_liquidity = Decimal::from_str(&ceiling_position.position.unwrap().liquidityy).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
-    let floor_liquidity = Decimal::from_str(&floor_position.position.unwrap().liquidity).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
+    // let ceiling_liquidity = Decimal::from_str(&ceiling_position.position.unwrap().liquidityy).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
+    // let floor_liquidity = Decimal::from_str(&floor_position.position.unwrap().liquidity).unwrap() * Uint128::new(10u64.pow(18 as u32) as u128);
 
-    panic!("ceiling: {:?}, floor: {:?}", ceiling_liquidity, floor_liquidity);
+    // panic!("ceiling: {:?}, floor: {:?}", ceiling_liquidity, floor_liquidity);
 
     Ok(Response::default())
 }
