@@ -5,7 +5,7 @@ use std::str::FromStr;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    attr, to_json_binary, BankMsg, Binary, Coin, CosmosMsg, Decimal, Decimal256, Deps, DepsMut, Env, MessageInfo, QuerierWrapper, Reply, Response, StdError, StdResult, SubMsg, Uint128, WasmMsg
+    attr, to_json_binary, BankMsg, Binary, Coin, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo, QuerierWrapper, Reply, Response, StdError, StdResult, SubMsg, Uint128, WasmMsg
 };
 use cw2::set_contract_version;
 use membrane::math::{decimal_multiplication, decimal_division};
@@ -982,6 +982,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::VaultTokenUnderlying { vault_token_amount } => to_json_binary(&query_vault_token_underlying(deps, env, vault_token_amount)?),
         QueryMsg::DepositTokenConversion { deposit_token_value } => to_json_binary(&query_deposit_token_conversion(deps, env, deposit_token_value)?),
         QueryMsg::ClaimTracker {} => to_json_binary(&CLAIM_TRACKER.load(deps.storage)?),
+        QueryMsg::TotalTVL {  } => to_json_binary(&query_vault_token_underlying(deps, env, VAULT_TOKEN.load(deps.storage))?),
     }
 }
 

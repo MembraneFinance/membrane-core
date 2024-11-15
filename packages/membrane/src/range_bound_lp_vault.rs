@@ -53,6 +53,7 @@ pub enum QueryMsg {
     VaultTokenUnderlying { vault_token_amount: Uint128 },
     DepositTokenConversion { deposit_token_value: Decimal },
     ClaimTracker {},
+    TotalTVL {},
 }
 
 #[cw_serde]
