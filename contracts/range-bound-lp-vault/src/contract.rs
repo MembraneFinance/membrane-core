@@ -809,7 +809,7 @@ fn manage_vault(
                 contract_addr: config.osmosis_proxy_contract_addr.to_string(),
                 msg: to_json_binary(&OP_ExecuteMsg::ExecuteSwaps {
                     token_out: config.range_tokens.clone().floor_deposit_token,
-                    max_slippage: Decimal::percent(99), //bc its yield we're not going to harp on slippage
+                    max_slippage: Decimal::percent(1), //we'd take whatever if this was only swapping yields but deposits get swapped as well
                 })?,
                 funds: vec![
                     Coin {
@@ -853,7 +853,7 @@ fn manage_vault(
                 contract_addr: config.osmosis_proxy_contract_addr.to_string(),
                 msg: to_json_binary(&OP_ExecuteMsg::ExecuteSwaps {
                     token_out: config.range_tokens.clone().floor_deposit_token,
-                    max_slippage: Decimal::percent(99), //bc its yield we're not going to harp on slippage
+                    max_slippage: Decimal::percent(1), //we'd take whatever if this was only swapping yields but deposits get swapped as well
                 })?,
                 funds: vec![
                     Coin {
@@ -900,7 +900,7 @@ fn manage_vault(
                 contract_addr: config.osmosis_proxy_contract_addr.to_string(),
                 msg: to_json_binary(&OP_ExecuteMsg::ExecuteSwaps {
                     token_out: config.range_tokens.clone().ceiling_deposit_token,
-                    max_slippage: Decimal::percent(99), //bc its yield we're not going to harp on slippage
+                    max_slippage: Decimal::percent(1), //we'd take whatever if this was only swapping yields but deposits get swapped as well
                 })?,
                 funds: vec![
                     Coin {
@@ -965,7 +965,7 @@ fn manage_vault(
                 contract_addr: config.osmosis_proxy_contract_addr.to_string(),
                 msg: to_json_binary(&OP_ExecuteMsg::ExecuteSwaps {
                     token_out: config.range_tokens.clone().ceiling_deposit_token,
-                    max_slippage: Decimal::percent(99), //bc its yield we're not going to harp on slippage
+                    max_slippage: Decimal::percent(1), //we'd take whatever if this was only swapping yields but deposits get swapped as well
                 })?,
                 funds: vec![
                     Coin {
