@@ -2396,8 +2396,9 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
-    //Remove fee events
-    // FEE_EVENTS.remove(deps.storage);
+    
+    //Initialize fee events
+    FEE_EVENTS.save(deps.storage, &vec![])?;
 
     Ok(Response::default())
 }
