@@ -1,10 +1,10 @@
 use cosmwasm_schema::cw_serde;
 
-use cosmwasm_std::Uint128;
+use cosmwasm_std::{Uint128, Decimal};
 use cw_storage_plus::{Item, Map};
 
 use membrane::osmosis_proxy::Config;
-use osmosis_std::types::osmosis::poolmanager::v1beta1::SwapAmountInRoute;
+use membrane::types::SwapRoute;
 
 #[cw_serde]
 pub struct TokenInfo {
@@ -24,14 +24,16 @@ pub struct PendingTokenInfo {
     pub max_supply: Option<Uint128>,
 }
 
+
 #[cw_serde]
-pub struct SwapRoute {
-    pub token_in: String,
-    pub route_out: SwapAmountInRoute,
+pub struct SwapInfo {
+    pub swapper: String,
+    pub token_out: String,
+    pub max_slippage: Decimal,
 }
 
 pub const CONFIG: Item<Config> = Item::new("config");
 pub const TOKENS: Map<String, TokenInfo> = Map::new("tokens"); //AssetInfo, TokenInfo
 pub const PENDING: Item<PendingTokenInfo> = Item::new("pending_denoms");
 pub const SWAP_ROUTES: Item<Vec<SwapRoute>> = Item::new("swap_routes");
-pub const SWAPPER: Item<String> = Item::new("swapper");
+pub const SWAP_INFO: Item<SwapInfo> = Item::new("swap_info");

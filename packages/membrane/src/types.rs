@@ -8,6 +8,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Decimal, Uint128, StdError};
 use cw_coins::Coins;
 
+use osmosis_std::types::osmosis::poolmanager::v1beta1::SwapAmountInRoute;
 use osmosis_std::types::cosmos::base::v1beta1::Coin;
 
 /// Stability Pool
@@ -727,6 +728,12 @@ pub struct Owner {
     pub non_token_contract_auth: bool,
     /// Is a position's contract?
     pub is_position_contract: bool,
+}
+
+#[cw_serde]
+pub struct SwapRoute {
+    pub token_in: String,
+    pub route_out: SwapAmountInRoute,
 }
 /// Launch
 #[cw_serde]

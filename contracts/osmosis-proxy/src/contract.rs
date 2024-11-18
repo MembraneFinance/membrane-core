@@ -6,23 +6,24 @@ use std::convert::TryInto;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    attr, to_binary, Addr, BankMsg, Binary, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo, Order, QuerierWrapper, Reply, Response, StdError, StdResult, SubMsg, Uint128
+    attr, to_binary, to_json_binary, Addr, BankMsg, Binary, Coin, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo, Order, QuerierWrapper, Reply, Response, StdError, StdResult, SubMsg, Uint128, WasmMsg
 };
 use cw2::set_contract_version;
 use membrane::helpers::get_asset_liquidity;
 use membrane::math::{decimal_multiplication, decimal_division};
-use osmosis_std::types::osmosis::gamm::v1beta1::GammQuerier;
+use osmosis_std::types::osmosis::gamm::v1beta1::{GammQuerier, MsgExitPool};
 use osmosis_std::types::osmosis::poolmanager::v1beta1::PoolmanagerQuerier;
 use osmosis_std::types::osmosis::incentives::MsgCreateGauge;
 
 use crate::error::TokenFactoryError;
-use crate::state::{PendingTokenInfo, SwapRoute, TokenInfo, CONFIG, PENDING, SWAPPER, SWAP_ROUTES, TOKENS};
+use crate::state::{PendingTokenInfo, TokenInfo, SwapInfo, CONFIG, PENDING, SWAP_INFO, SWAP_ROUTES, TOKENS};
 use membrane::osmosis_proxy::{
     Config, ExecuteMsg, GetDenomResponse, InstantiateMsg, QueryMsg, MigrateMsg, TokenInfoResponse, OwnerResponse, ContractDenomsResponse,
 };
 use membrane::cdp::{QueryMsg as CDPQueryMsg, Config as CDPConfig};
 use membrane::oracle::{QueryMsg as OracleQueryMsg, PriceResponse};
-use membrane::types::{PoolStateResponse, Basket, Owner, AssetInfo};
+use membrane::types::{PoolStateResponse, Basket, Owner, AssetInfo, SwapRoute};
+use membrane::mars_vault_token::ExecuteMsg as MarsVaultExecuteMsg;
 use osmosis_std::types::osmosis::tokenfactory::v1beta1::{self as TokenFactory, QueryDenomsFromCreatorResponse, MsgCreateDenomResponse};
 use osmosis_std::types::osmosis::poolmanager::v1beta1::{MsgSwapExactAmountIn, SwapAmountInRoute};
 
@@ -35,6 +36,7 @@ const MAX_LIMIT: u32 = 64;
 
 const CREATE_DENOM_REPLY_ID: u64 = 1u64;
 const SWAP_REPLY_ID: u64 = 2u64;
+const USE_BALANCE_SWAP_REPLY_ID: u64 = 3u64;
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -77,7 +79,7 @@ pub fn execute(
 ) -> Result<Response, TokenFactoryError> {
     match msg {
         ExecuteMsg::ExecuteSwaps { token_out, max_slippage } => {
-            execute_swaps(deps, env, info, token_out, max_slippage)
+            execute_swaps(deps, env, info.sender.clone(), info.funds.clone() token_out, max_slippage)
         }
         ExecuteMsg::CreateDenom {
             subdenom,
@@ -126,80 +128,121 @@ pub fn execute(
 fn execute_swaps(
     deps: DepsMut,
     env: Env,
-    info: MessageInfo,
+    swapper: Addr,
+    funds: Vec<Coin>,
     token_out: String,
     max_slippage: Decimal,
 ) -> Result<Response, TokenFactoryError> {
     let config = CONFIG.load(deps.storage)?;
     let swap_routes = SWAP_ROUTES.load(deps.storage)?;
     let mut msgs = vec![];
+    let mut used_special = false;
 
     //If no funds sent, error
-    if info.funds.is_empty() {
+    if funds.is_empty() {
         return Err(TokenFactoryError::ZeroAmount {});
     }
 
     //create swap msgs for each asset sent
-    for coin in info.funds.into_iter() {
+    for coin in funds.into_iter() {
         //Get routes
         let routes: Vec<SwapAmountInRoute> = get_swap_route(swap_routes.clone(), coin.denom.clone(), token_out.clone())?;
+        
+        //If coin's denom is a VT or a GAMM, do special
+        if coin.denom.contains("gamm/"){
+            //Toggle used_special
+            used_special = true;
+            //Withdraw from GAMM pool
+            let withdraw_msg: CosmosMsg = MsgExitPool {
+                sender: env.contract.address.to_string(),
+                pool_id: routes[0].pool_id,
+                share_in_amount: coin.amount.to_string(),
+                token_out_mins: vec![],
+            }.into();
+            //Add as Submsg
+            msgs.push(SubMsg::reply_on_success(withdraw_msg, USE_BALANCE_SWAP_REPLY_ID));
+        } 
+        //ID 0 means its a VT
+        else if routes[0].pool_id == 0{
+            //Toggle used_special
+            used_special = true;
+            //Get the VT address from the token denom
+            let vt_address = coin.denom.split('/').collect::<Vec<&str>>()[1];
+            //Exit VT
+            let exit_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: vt_address.to_string(),
+                msg: to_json_binary(&MarsVaultExecuteMsg::ExitVault {  })?,
+                funds: vec![coin.clone()],
+            });
+            //Add as Submsg
+            msgs.push(SubMsg::reply_on_success(exit_msg, USE_BALANCE_SWAP_REPLY_ID));
+        } 
+        //Act Normal
+        else {        
 
-        //Get token_in & token_out prices
-        let token_prices: Vec<PriceResponse> = deps.querier.query_wasm_smart(
-            config.oracle_contract.clone().unwrap().to_string(), 
-            &OracleQueryMsg::Prices { 
-            asset_infos: vec![
-                AssetInfo::NativeToken { denom: coin.denom.clone() },
-                AssetInfo::NativeToken { denom: token_out.clone() },
-                ],
-            twap_timeframe: 0u64,
-            oracle_time_limit: 0u64,
-        })?;
-        let token_in_price = token_prices[0].clone();
-        let token_out_price = token_prices[1].clone();
+            //Get token_in & token_out prices
+            let token_prices: Vec<PriceResponse> = deps.querier.query_wasm_smart(
+                config.oracle_contract.clone().unwrap().to_string(), 
+                &OracleQueryMsg::Prices { 
+                asset_infos: vec![
+                    AssetInfo::NativeToken { denom: coin.denom.clone() },
+                    AssetInfo::NativeToken { denom: token_out.clone() },
+                    ],
+                twap_timeframe: 0u64,
+                oracle_time_limit: 0u64,
+            })?;
+            let token_in_price = token_prices[0].clone();
+            let token_out_price = token_prices[1].clone();
 
-        //Calculate min amount out
-        let token_in_value = token_in_price.get_value(coin.amount)?;
-        let token_out_min_value = decimal_multiplication(token_in_value, Decimal::one() - max_slippage)?;
-        let token_out_min_amount = token_out_price.get_amount(token_out_min_value)?;
+            //Calculate min amount out
+            let token_in_value = token_in_price.get_value(coin.amount)?;
+            let token_out_min_value = decimal_multiplication(token_in_value, Decimal::one() - max_slippage)?;
+            let token_out_min_amount = token_out_price.get_amount(token_out_min_value)?;
 
-        //Create Msg
-        let msg: CosmosMsg = MsgSwapExactAmountIn {
-            sender: env.contract.address.to_string(),
-            routes,
-            token_in: Some(osmosis_std::types::cosmos::base::v1beta1::Coin {
-                amount: coin.amount.to_string(),
-                denom: coin.denom,
-            }),
-            token_out_min_amount: token_out_min_amount.to_string(),
-            
-        }.into();
-        //Add Msgs
-        msgs.push(msg);
+            //Create Msg
+            let msg: CosmosMsg = MsgSwapExactAmountIn {
+                sender: env.contract.address.to_string(),
+                routes,
+                token_in: Some(osmosis_std::types::cosmos::base::v1beta1::Coin {
+                    amount: coin.amount.to_string(),
+                    denom: coin.denom,
+                }),
+                token_out_min_amount: token_out_min_amount.to_string(),
+                
+            }.into();
+            //Add Msgs
+            msgs.push(SubMsg::new(msg));
+        }
     }
 
-    //Set swapper
-    SWAPPER.save(deps.storage, &info.sender.clone().to_string())?;
+    //Set Swap Info
+    SWAP_INFO.save(deps.storage, &SwapInfo {
+        swapper,
+        token_out,
+        max_slippage,
+    })?;
     
-    //Remove last msg from msgs
-    let last_msg = match msgs.pop(){
-        Some(msg) => msg,
-        None => return Err(TokenFactoryError::CustomError { val: String::from("No messages to swap") })
-    };
+    //If we are using a special exit & its the only msg, we don't want to change the reply ID
+    if msgs.len() > 1 && !used_special {
+        //Remove last msg from msgs
+        let last_msg = match msgs.pop(){
+            Some(msg) => msg,
+            None => return Err(TokenFactoryError::CustomError { val: String::from("No messages to swap") })
+        };
 
-    //Set the last msg of the list to be a submessage with a swap reply
-    let submsg = SubMsg::reply_on_success(last_msg, SWAP_REPLY_ID);
+        //Set the last msg of the list to be a submessage with a swap reply
+        msgs.push(SubMsg::reply_on_success(last_msg.msg, SWAP_REPLY_ID));
+    }
 
 
     Ok(Response::new()
     .add_attribute("token_out", token_out)
     .add_attribute("max_slippage", max_slippage.to_string())
-    .add_messages(msgs).add_submessage(submsg))
+    .add_submessages(msgs))
 }
 
 fn get_swap_route(swap_routes: Vec<SwapRoute>, mut token_in: String, token_out: String) -> Result<Vec<SwapAmountInRoute>, TokenFactoryError> {
-        let mut iterations = 0u64;
-
+    let mut iterations = 0u64;
     
     //Search swap route for token_in
     let swap_route = match swap_routes.clone().into_iter().find(|route| route.token_in == token_in){
@@ -207,6 +250,9 @@ fn get_swap_route(swap_routes: Vec<SwapRoute>, mut token_in: String, token_out: 
         None => return Err(TokenFactoryError::CustomError { val: format!("{:?} not found in swap routes", token_in) })
     };
     let mut routes: Vec<SwapAmountInRoute> = vec![swap_route.route_out.clone()];
+    
+    //Update token_in
+    token_in = swap_route.route_out.token_out_denom;
 
     while (token_out != routes[routes.len() - 1].token_out_denom && iterations < 5){
         //Search swap route for token_in
@@ -245,6 +291,7 @@ fn update_config(
     liquidity_contract: Option<String>,
     oracle_contract: Option<String>,
     add_owner: Option<bool>,
+    edit_routes: Option<Vec<SwapRoute>>,
 ) -> Result<Response, TokenFactoryError> {
     let mut config = CONFIG.load(deps.storage)?;
 
@@ -302,6 +349,22 @@ fn update_config(
     }
     if let Some(oracle_contract) = oracle_contract {
         config.oracle_contract = Some(deps.api.addr_validate(&oracle_contract)?);
+    }
+    //Edit Swap Routes
+    if let Some(new_routes) = new_routes {
+        //Load current swap routes
+        let mut swap_routes = SWAP_ROUTES.load(deps.storage)?;
+        //Update routes with the same token_in
+        for route in new_routes {
+            //If route exists, update it
+            if let Some((index, _route)) = swap_routes.clone().into_iter().enumerate().find(|(_i, route)| route.token_in == route.token_in){
+                swap_routes[index] = route;
+            } else {
+                //Add new route
+                swap_routes.push(route);
+            }
+        }
+
     }
 
     //Save Config
@@ -740,7 +803,7 @@ pub fn burn_tokens(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::Config {} => to_binary(&CONFIG.load(deps.storage)?),
+        QueryMsg::Config { } => to_binary(&CONFIG.load(deps.storage)?),
         QueryMsg::GetOwner { owner } => to_binary(&get_contract_owner(deps, owner)?),
         QueryMsg::GetDenom {
             creator_address,
@@ -749,6 +812,7 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::GetContractDenoms { limit } => to_binary(&get_contract_denoms(deps, limit)?),
         QueryMsg::PoolState { id } => to_binary(&get_pool_state(deps, id)?),
         QueryMsg::GetTokenInfo { denom } => to_binary(&get_token_info(deps, denom)?),
+        QueryMsg::GetSwapRoutes { } => to_binary(&SWAP_ROUTES.load(deps.storage)?),
     }
 }
 
@@ -873,15 +937,46 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response> {
     }
 }
 
+fn handle_swap_balances_reply(
+    deps: DepsMut,
+    env: Env,
+    msg: Reply,
+) -> StdResult<Response> {
+    match msg.result.into_result() {
+        Ok(_) => {
+            //Get swapper
+            let swap_info = SWAP_INFO.load(deps.storage)?;
+
+            //Swap all assets in the contract
+            let balances = deps.querier.query_all_balances(&env.contract.address)?;
+
+            //Execute swap with new balances
+            let res = execute_swaps(
+                deps, 
+                env, 
+                swap_info.swapper.clone(), 
+                balances.clone(),
+                swap_info.token_out.clone(),
+                swap_info.max_slippage.clone(),
+            )?;
+
+            return Ok(res
+            .add_attribute("swap_info", format!("{:?}", swap_info))
+            .add_attribute("tokens_received", format!("{:?}", balances)))
+        } //We only reply on success
+        Err(err) => return Err(StdError::GenericErr { msg: err }),
+    }
+}
+
 fn handle_swap_reply(
     deps: DepsMut,
     env: Env,
     msg: Reply,
 ) -> StdResult<Response> {
     match msg.result.into_result() {
-        Ok(result) => {
+        Ok(_) => {
             //Get swapper
-            let swapper = SWAPPER.load(deps.storage)?;
+            let swapper = SWAP_INFO.load(deps.storage)?.swapper;
 
             //Send all assets in the contract to the swapper
             let balances = deps.querier.query_all_balances(&env.contract.address)?;
@@ -892,7 +987,8 @@ fn handle_swap_reply(
             });
 
             //Remove swapper
-            SWAPPER.remove(deps.storage);
+            // SWAP_INFO.remove(deps.storage);
+            //Don't remove incase we have 2 swap replies due to a special exit
 
             return Ok(Response::new()
             .add_attribute("swapper", swapper)
@@ -940,7 +1036,7 @@ fn handle_create_denom_reply(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
-    let current_routes = SWAP_ROUTES.load(deps.storage)?;
+    let mut current_routes = SWAP_ROUTES.load(deps.storage)?;
     let mut new_routes = vec![];
     //Set WBTC to allBTC
     let swap_route = SwapRoute {
@@ -1189,8 +1285,244 @@ pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, To
         },
     };
     new_routes.push(swap_route);
+    
+    //Set stDYDX to DYDX
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/980E82A9F8E7CA8CD480F4577E73682A6D3855A267D1831485D7EBEF0E7A6C2C"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/831F0B1BBB1D08A2B75311892876D71565478C532967545476DF4C2D7492E48C"),
+            pool_id: 1423u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set DYDX to stDYDX
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/831F0B1BBB1D08A2B75311892876D71565478C532967545476DF4C2D7492E48C"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/980E82A9F8E7CA8CD480F4577E73682A6D3855A267D1831485D7EBEF0E7A6C2C"),
+            pool_id: 1423u64,
+        },
+    };
+    new_routes.push(swap_route);
+     //Set OSMO to DYDX
+     let swap_route = SwapRoute {
+        token_in: String::from("uosmo"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/831F0B1BBB1D08A2B75311892876D71565478C532967545476DF4C2D7492E48C"),
+            pool_id: 1423u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set DYDX to OSMO
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/831F0B1BBB1D08A2B75311892876D71565478C532967545476DF4C2D7492E48C"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("uosmo"),
+            pool_id: 1423u64,
+        },
+    };
+    new_routes.push(swap_route);
 
     
+    //Set OSMO to DVPN
+     let swap_route = SwapRoute {
+        token_in: String::from("uosmo"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/9712DBB13B9631EDFA9BF61B55F1B2D290B2ADB67E3A4EB3A875F3B6081B3B84"),
+            pool_id: 5u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set DVPN to OSMO
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/9712DBB13B9631EDFA9BF61B55F1B2D290B2ADB67E3A4EB3A875F3B6081B3B84"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("uosmo"),
+            pool_id: 5u64,
+        },
+    };
+    new_routes.push(swap_route);
 
-    Ok(Response::default())
+    //Set USDC to AKT
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/1480B8FD20AD5FCAE81EA87584D269547DD4D436843C1D20F15E00EB64743EF4"),
+            pool_id: 1301u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set AKT to USDC
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/1480B8FD20AD5FCAE81EA87584D269547DD4D436843C1D20F15E00EB64743EF4"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+            pool_id: 1301u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set OSMO to LVN
+     let swap_route = SwapRoute {
+        token_in: String::from("uosmo"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("factory/osmo1mlng7pz4pnyxtpq0akfwall37czyk9lukaucsrn30ameplhhshtqdvfm5c/ulvn"),
+            pool_id: 1325u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set LVN to OSMO
+    let swap_route = SwapRoute {
+        token_in: String::from("factory/osmo1mlng7pz4pnyxtpq0akfwall37czyk9lukaucsrn30ameplhhshtqdvfm5c/ulvn"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("uosmo"),
+            pool_id: 1325u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set USDC to LAB
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("factory/osmo17fel472lgzs87ekt9dvk0zqyh5gl80sqp4sk4n/LAB"),
+            pool_id: 1656u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set LAB to USDC
+    let swap_route = SwapRoute {
+        token_in: String::from("factory/osmo17fel472lgzs87ekt9dvk0zqyh5gl80sqp4sk4n/LAB"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+            pool_id: 1656u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set OSMO to JKL
+     let swap_route = SwapRoute {
+        token_in: String::from("uosmo"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/8E697BDABE97ACE8773C6DF7402B2D1D5104DD1EEABE12608E3469B7F64C15BA"),
+            pool_id: 832u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set JKL to OSMO
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/8E697BDABE97ACE8773C6DF7402B2D1D5104DD1EEABE12608E3469B7F64C15BA"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("uosmo"),
+            pool_id: 832u64,
+        },
+    };
+    new_routes.push(swap_route);
+    
+    //Set USDC to INJ
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/64BA6E31FE887D66C6F8F31C7B1A80C7CA179239677B4088BB55F5EA07DBE273"),
+            pool_id: 1319u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set INJ to USDC
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/64BA6E31FE887D66C6F8F31C7B1A80C7CA179239677B4088BB55F5EA07DBE273"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+            pool_id: 1319u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set USDC to ISLM
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/69110FF673D70B39904FF056CFDFD58A90BEC3194303F45C32CB91B8B0A738EA"),
+            pool_id: 1690u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set ISLM to USDC
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/69110FF673D70B39904FF056CFDFD58A90BEC3194303F45C32CB91B8B0A738EA"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+            pool_id: 1690u64,
+        },
+    };
+    new_routes.push(swap_route); 
+    //Set allSOL to SOL.wh
+    let swap_route = SwapRoute {
+        token_in: String::from("factory/osmo1n3n75av8awcnw4jl62n3l48e6e4sxqmaf97w5ua6ddu4s475q5qq9udvx4/alloyed/allSOL"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/1E43D59E565D41FB4E54CA639B838FFD5BCFC20003D330A56CB1396231AA1CBA"),
+            pool_id: 1925u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set SOL.wh to allSOL
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/1E43D59E565D41FB4E54CA639B838FFD5BCFC20003D330A56CB1396231AA1CBA"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("factory/osmo1n3n75av8awcnw4jl62n3l48e6e4sxqmaf97w5ua6ddu4s475q5qq9udvx4/alloyed/allSOL"),
+            pool_id: 1925u64,
+        },
+    };
+    new_routes.push(swap_route);
+    
+    //Set USDC to allSOL
+    let swap_route = SwapRoute {
+        token_in: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("factory/osmo1n3n75av8awcnw4jl62n3l48e6e4sxqmaf97w5ua6ddu4s475q5qq9udvx4/alloyed/allSOL"),
+            pool_id: 1960u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set allSOL to USDC
+    let swap_route = SwapRoute {
+        token_in: String::from("factory/osmo1n3n75av8awcnw4jl62n3l48e6e4sxqmaf97w5ua6ddu4s475q5qq9udvx4/alloyed/allSOL"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+            pool_id: 1960u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    /////////SPECIALS (VTs & GAMM)///////////
+    //Set marsUSDC to USDC
+    let swap_route = SwapRoute {
+        token_in: String::from("factory/osmo1fqcwupyh6s703rn0lkxfx0ch2lyrw6lz4dedecx0y3ced2jq04tq0mva2l/mars-usdc-tokenized"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from("ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4"),
+            pool_id: 0u64, //if pool ID is 0, its a vault token so we must exit to get the token_out_denom
+        },
+    };
+    new_routes.push(swap_route);
+    //Set GAMM 1 
+    let swap_route = SwapRoute {
+        token_in: String::from("gamm/pool/1"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from(""),
+            pool_id: 1u64,
+        },
+    };
+    new_routes.push(swap_route);
+    //Set GAMM 678
+    let swap_route = SwapRoute {
+        token_in: String::from("gamm/pool/678"),
+        route_out: SwapAmountInRoute {
+            token_out_denom: String::from(""),
+            pool_id: 678u64,
+        },
+    };
+    new_routes.push(swap_route);
+
+    //Set new routes
+    let new_routes = [current_routes, new_routes].concat();
+    //Update current routes
+    SWAP_ROUTES.save(deps.storage, &new_routes)?;
+
+    Ok(Response::default().add_attribute("routes", format!("{:?}", new_routes)))
 }

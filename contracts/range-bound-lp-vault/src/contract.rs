@@ -38,6 +38,9 @@ const CL_POSITION_CREATION_REPLY_ID: u64 = 5u64;
 const SWAP_TO_FLOOR_ADD_BOTH_REPLY_ID: u64 = 6u64;
 const SWAP_TO_CEILING_ADD_BOTH_REPLY_ID: u64 = 7u64;
 
+//NOTE: When we add a WITHDRAWAL_PERIOD, it'll be added as a state object that holds User's VTs and saves their unstake time. 
+    //Then when its time to withdraw, the contract will use & burn the VTs in the contract and send the user their assets.
+
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,

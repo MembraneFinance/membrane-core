@@ -3,7 +3,7 @@ use cosmwasm_std::{Uint128, Addr, Decimal};
 
 use osmosis_std::types::osmosis::incentives::MsgCreateGauge;
 
-use crate::types::Owner;
+use crate::types::{Owner, SwapRoute};
 
 #[cw_serde]
 pub struct InstantiateMsg {}
@@ -74,6 +74,8 @@ pub enum ExecuteMsg {
         liquidity_contract: Option<String>,
         /// Oracle contract address
         oracle_contract: Option<String>,
+        /// Edit swap routes
+        edit_routes: Option<Vec<SwapRoute>>,
     },
     /// Edit owner params & permissions
     EditOwner {
@@ -119,6 +121,8 @@ pub enum QueryMsg {
         /// Native token denom
         denom: String,
     },
+    /// Return list of swap routes
+    GetSwapRoutes { },
 }
 
 #[cw_serde]
