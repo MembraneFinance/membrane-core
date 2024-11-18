@@ -79,7 +79,7 @@ pub fn execute(
 ) -> Result<Response, TokenFactoryError> {
     match msg {
         ExecuteMsg::ExecuteSwaps { token_out, max_slippage } => {
-            execute_swaps(deps, env, info.sender.clone(), info.funds.clone() token_out, max_slippage)
+            execute_swaps(deps, env, info.sender.clone(), info.funds.clone(), token_out, max_slippage)
         }
         ExecuteMsg::CreateDenom {
             subdenom,
