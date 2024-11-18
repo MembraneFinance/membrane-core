@@ -219,7 +219,7 @@ fn execute_swaps(
     //Set Swap Info
     SWAP_INFO.save(deps.storage, &SwapInfo {
         swapper,
-        token_out,
+        token_out: token_out.clone(),
         max_slippage,
     })?;
     
@@ -955,7 +955,7 @@ fn handle_swap_balances_reply(
             let res = match execute_swaps(
                 deps, 
                 env, 
-                Addr::unchecked(swap_info.swapper.clone()),
+                swap_info.swapper.clone(),
                 balances.clone(),
                 swap_info.token_out.clone(),
                 swap_info.max_slippage.clone(),
@@ -986,7 +986,7 @@ fn handle_swap_reply(
             let balances = deps.querier.query_all_balances(&env.contract.address)?;
 
             let msg: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
-                to_address: swapper.clone(),
+                to_address: swapper.clone().to_string(),
                 amount: balances.clone(),
             });
 
