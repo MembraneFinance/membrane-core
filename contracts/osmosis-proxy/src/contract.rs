@@ -951,14 +951,17 @@ fn handle_swap_balances_reply(
             let balances = deps.querier.query_all_balances(&env.contract.address)?;
 
             //Execute swap with new balances
-            let res = execute_swaps(
+            let res = match execute_swaps(
                 deps, 
                 env, 
                 swap_info.swapper.clone(), 
                 balances.clone(),
                 swap_info.token_out.clone(),
                 swap_info.max_slippage.clone(),
-            )?;
+            ){
+                Ok(res) => res,
+                Err(err) => return Err(StdError::GenericErr { msg: err }),
+            };
 
             return Ok(res
             .add_attribute("swap_info", format!("{:?}", swap_info))
