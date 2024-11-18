@@ -117,7 +117,8 @@ pub fn execute(
             positions_contract,
             liquidity_contract,
             oracle_contract,
-        } => update_config(deps, info, owners, liquidity_multiplier, debt_auction, positions_contract, liquidity_contract, oracle_contract, add_owner),
+            edit_routes
+        } => update_config(deps, info, owners, liquidity_multiplier, debt_auction, positions_contract, liquidity_contract, oracle_contract, add_owner, edit_routes),
         ExecuteMsg::EditOwner { owner, stability_pool_ratio, non_token_contract_auth } => {
             edit_owner(deps, info, owner, stability_pool_ratio, non_token_contract_auth)
         }
@@ -351,7 +352,7 @@ fn update_config(
         config.oracle_contract = Some(deps.api.addr_validate(&oracle_contract)?);
     }
     //Edit Swap Routes
-    if let Some(new_routes) = new_routes {
+    if let Some(new_routes) = edit_routes {
         //Load current swap routes
         let mut swap_routes = SWAP_ROUTES.load(deps.storage)?;
         //Update routes with the same token_in
@@ -954,14 +955,14 @@ fn handle_swap_balances_reply(
             let res = match execute_swaps(
                 deps, 
                 env, 
-                swap_info.swapper.clone(), 
+                Addr::unchecked(swap_info.swapper.clone()),
                 balances.clone(),
                 swap_info.token_out.clone(),
                 swap_info.max_slippage.clone(),
             ){
                 Ok(res) => res,
-                Err(err) => return Err(StdError::GenericErr { msg: err }),
-            };
+                Err(err) => return Err(StdError::GenericErr { msg: err.to_string() }),
+            };  
 
             return Ok(res
             .add_attribute("swap_info", format!("{:?}", swap_info))
