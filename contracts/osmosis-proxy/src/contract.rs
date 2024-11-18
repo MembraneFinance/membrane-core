@@ -148,7 +148,7 @@ fn execute_swaps(
         //Get routes
         let routes: Vec<SwapAmountInRoute> = get_swap_route(swap_routes.clone(), coin.denom.clone(), token_out.clone())?;
         
-        //If coin's denom is a VT or a GAMM, do special
+        //If coin's denom is a VT or a GAMM, do special exit
         if coin.denom.contains("gamm/"){
             //Toggle used_special
             used_special = true;
@@ -163,7 +163,7 @@ fn execute_swaps(
             msgs.push(SubMsg::reply_on_success(withdraw_msg, USE_BALANCE_SWAP_REPLY_ID));
         } 
         //ID 0 means its a VT
-        else if routes[0].pool_id == 0{
+        else if routes[0].pool_id == 0 {
             //Toggle used_special
             used_special = true;
             //Get the VT address from the token denom
@@ -223,7 +223,7 @@ fn execute_swaps(
     })?;
     
     //If we are using a special exit & its the only msg, we don't want to change the reply ID
-    if msgs.len() > 1 && !used_special {
+    if !(msgs.len() == 1 && used_special) {
         //Remove last msg from msgs
         let last_msg = match msgs.pop(){
             Some(msg) => msg,
