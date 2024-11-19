@@ -723,10 +723,10 @@ pub fn burn_tokens(
     amount: Uint128,
     burn_from_address: String,
 ) -> Result<Response, TokenFactoryError> {    
-    let mut config = CONFIG.load(deps.storage)?;
+    let config = CONFIG.load(deps.storage)?;
 
     //Assert Authority
-    let (authorized, owner_index) = validate_authority(config.clone(), info.clone());
+    let (authorized, _) = validate_authority(config.clone(), info.clone());
     if !authorized {
         return Err(TokenFactoryError::Unauthorized {});
     }
@@ -736,28 +736,6 @@ pub fn burn_tokens(
     }
 
     validate_denom(denom.clone())?;
-
-    //Update Owner total_mints
-    // if config.owners[owner_index].total_minted.is_zero() {
-    //     //////Subtracted from the Position Contract's minted amount
-    //     //Find the is_position_contract = true in config owners
-    //     let mut position_contract_index = 0;
-    //     for (i, owner) in config.clone().owners.into_iter().enumerate() {
-    //         if owner.is_position_contract {
-    //             position_contract_index = i;
-    //         }
-    //     }
-    //     //Subtract from the position contract's total minted
-    //     config.owners[position_contract_index].total_minted = match config.owners[position_contract_index].total_minted.checked_sub(amount){
-    //         Ok(diff) => diff,
-    //         Err(err) => return Err(TokenFactoryError::CustomError { val: err.to_string() })
-    //     };
-    // } else {
-    //     config.owners[owner_index].total_minted = match config.owners[owner_index].total_minted.checked_sub(amount){
-    //         Ok(diff) => diff,
-    //         Err(err) => return Err(TokenFactoryError::CustomError { val: err.to_string() })
-    //     }
-    // };
     CONFIG.save(deps.storage, &config)?;
 
 
@@ -934,6 +912,7 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response> {
     match msg.id {
         CREATE_DENOM_REPLY_ID => handle_create_denom_reply(deps, env, msg),
         SWAP_REPLY_ID => handle_swap_reply(deps, env, msg),
+        USE_BALANCE_SWAP_REPLY_ID => handle_swap_balances_reply(deps, env, msg),
         id => Err(StdError::generic_err(format!("invalid reply id: {}", id))),
     }
 }
@@ -1039,8 +1018,8 @@ fn handle_create_denom_reply(
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
-    let mut current_routes = SWAP_ROUTES.load(deps.storage)?;
+pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
+    let current_routes = SWAP_ROUTES.load(deps.storage)?;
     let mut new_routes = vec![];
     //Set WBTC to allBTC
     let swap_route = SwapRoute {
