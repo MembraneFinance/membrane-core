@@ -28,7 +28,7 @@ use crate::positions::{
     LIQ_QUEUE_REPLY_ID, REVENUE_REPLY_ID, create_basket,
 };
 use crate::query::{
-    query_basket_credit_interest, query_basket_debt_caps, query_basket_positions, query_basket_redeemability, query_collateral_rates, simulate_LTV_mint
+    query_basket_credit_interest, query_basket_positions, query_basket_redeemability, query_collateral_rates, simulate_LTV_mint
 };
 use crate::liquidations::liquidate;
 use crate::reply::{handle_liq_queue_reply, handle_withdraw_reply, handle_revenue_reply};
@@ -554,9 +554,6 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::GetBasket { } => to_binary(&BASKET.load(deps.storage)?),
         QueryMsg::GetBasketRedeemability { position_owner, start_after, limit } => {
             to_binary(&query_basket_redeemability(deps, position_owner, start_after, limit)?)
-        }
-        QueryMsg::GetBasketDebtCaps { } => {
-            to_binary(&query_basket_debt_caps(deps, env)?)
         }
         QueryMsg::GetCreditRate { } => {
             to_binary(&query_basket_credit_interest(deps, env)?)

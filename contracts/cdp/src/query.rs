@@ -20,7 +20,6 @@ use membrane::types::{
 use membrane::math::{decimal_division, decimal_multiplication, decimal_subtraction};
 
 use crate::positions::get_amount_from_LTV;
-use crate::risk_engine::get_basket_debt_caps;
 use crate::state::{get_target_position, CollateralVolatility, BASKET, CONFIG, POSITIONS, REDEMPTION_OPT_IN, STORED_PRICES, VOLATILITY};
 
 const MAX_LIMIT: u32 = 31;
@@ -123,26 +122,6 @@ pub fn query_basket_positions(
         .collect()
 }
 
-//Calculate debt caps
-pub fn query_basket_debt_caps(deps: Deps, env: Env) -> StdResult<Vec<DebtCap>> {    
-    let mut basket: Basket = BASKET.load(deps.storage)?;
-
-    let asset_caps = get_basket_debt_caps(deps.storage, deps.querier, env, &mut basket, &mut vec![], None)?;
-
-    let mut res = vec![];
-    //Append DebtCap
-    for (index, cap) in basket.collateral_supply_caps.iter().enumerate() {        
-        res.push(
-                DebtCap {
-                    collateral: cap.clone().asset_info,
-                    debt_total: cap.debt_total,
-                    cap: asset_caps[index],
-                }
-            );
-    }
-
-    Ok( res )
-}
 
 /// Returns cAsset interest rates for the Basket
 pub fn query_collateral_rates(

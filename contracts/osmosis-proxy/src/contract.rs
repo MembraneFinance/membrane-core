@@ -1040,13 +1040,15 @@ fn handle_create_denom_reply(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
     //Query routes from the test OP
-    let routes: Vec<SwapRoute> = deps.querier.query_wasm_smart::<Vec<SwapRoute>>(
-        "osmo1968gjpryrmvkydzw47dfdae0p9jzy43p4ckr9geswekm73j4ufkq5tz07q".to_string(),
-        &QueryMsg::GetSwapRoutes {  }
-    )?;
-    //Update current routes
-    SWAP_ROUTES.save(deps.storage, &routes)?;
+    // let routes: Vec<SwapRoute> = deps.querier.query_wasm_smart::<Vec<SwapRoute>>(
+    //     "osmo1968gjpryrmvkydzw47dfdae0p9jzy43p4ckr9geswekm73j4ufkq5tz07q".to_string(),
+    //     &QueryMsg::GetSwapRoutes {  }
+    // )?;
+    // //Update current routes
+    // SWAP_ROUTES.save(deps.storage, &routes)?;
     
 
-    Ok(Response::default().add_attribute("routes", format!("{:?}", routes)))
+    Ok(Response::default()
+    // .add_attribute("routes", format!("{:?}", routes))
+)
 }

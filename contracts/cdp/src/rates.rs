@@ -1,4 +1,4 @@
-use std::cmp::{min, Ordering};
+use std::cmp::{max, min, Ordering};
 use std::str::FromStr;
 
 use cosmwasm_std::{attr, Addr, Api, Decimal, DepsMut, Env, MessageInfo, Order, QuerierWrapper, Response, StdError, StdResult, Storage, Uint128};
@@ -11,7 +11,6 @@ use membrane::math::{decimal_multiplication, decimal_division, decimal_subtracti
 
 use crate::ContractError;
 use crate::query::{get_asset_values, get_cAsset_ratios, VOLATILITY_LIST_LIMIT};
-use crate::risk_engine::get_basket_debt_caps;
 use crate::state::{get_target_position, update_position, BASKET, CONFIG, VOLATILITY};
 
 //Constants
@@ -99,10 +98,9 @@ pub fn update_rate_indices(
     supply_caps: &mut Vec<SupplyCap>,
     negative_rate: bool,
     credit_price_rate: Decimal,
-    cdt_liquidity: Option<Uint128>,
 ) -> StdResult<()>{
     //Get basket rates
-    let mut interest_rates = match get_interest_rates(storage, querier, env.clone(), basket, supply_caps, cdt_liquidity){
+    let mut interest_rates = match get_interest_rates(storage, querier, env.clone(), basket, supply_caps){
         Ok(rates) => rates,
         Err(err) => {
             return Err(StdError::GenericErr {
@@ -178,14 +176,15 @@ pub fn update_rate_indices(
 /// Calculate interest rates for each asset in the basket
 ///Maximum rate is 100% to avoid overflows due to supply cap/pricing errors
 /// 
-/// Note: Proportional debt caps will never overflow bc the debt total (de/in)creases with the supply ratio, but static caps (SP cap) can
+/// Goal: Rates at base unless supply cap overages
+/// - To ensure rates at base, we set the cap ratios to a minimum of 100% (i.e. Decimal::one() )
+/// - Remove debt caps bc they can't be calculated accurately
 pub fn get_interest_rates(
     storage: &mut dyn Storage,
     querier: QuerierWrapper,
     env: Env,
     basket: &mut Basket,
     supply_caps: &mut Vec<SupplyCap>,
-    cdt_liquidity: Option<Uint128>,
 ) -> StdResult<Vec<Decimal>> {
     let config = CONFIG.load(storage)?;
 
@@ -207,18 +206,8 @@ pub fn get_interest_rates(
         }    
     }
 
-    //Get proportion of debt && supply caps filled
-    let mut debt_proportions = vec![];
+    //Get proportion of supply caps filled
     let mut supply_proportions = vec![];
-    
-    let debt_caps = match get_basket_debt_caps(storage, querier, env.clone(), basket, supply_caps, cdt_liquidity) {
-        Ok(caps) => caps,
-        Err(err) => {
-            return Err(StdError::GenericErr {
-                msg: format!("Error at line 214: {}", err)
-            })            
-        }
-    };
    
     //Get basket cAsset ratios
     let (basket_ratios, _) =
@@ -227,15 +216,16 @@ pub fn get_interest_rates(
     for (i, cap) in supply_caps.iter().enumerate() {
         //Caps set to 0 can be used to push out unwanted assets by spiking rates
         if cap.supply_cap_ratio.is_zero() {
-            debt_proportions.push(Decimal::percent(100));
             supply_proportions.push(Decimal::percent(100));
-        } else if debt_caps[i].is_zero(){
-            debt_proportions.push(Decimal::zero());
-            supply_proportions.push(Decimal::zero());
-        } else {
-            //Push the debt_ratio and supply_ratio
-            debt_proportions.push(Decimal::from_ratio(cap.debt_total, debt_caps[i]));
-            supply_proportions.push(decimal_division(basket_ratios[i], cap.supply_cap_ratio)?)
+        }
+        else {
+            //Push the supply_ratio. Minimum is 100% to guarantee rates >= base.
+            supply_proportions.push(
+                max(
+                    decimal_division(basket_ratios[i], cap.supply_cap_ratio)?,
+                Decimal::percent(100)
+                )
+            )
         }
     }
 
@@ -247,47 +237,8 @@ pub fn get_interest_rates(
         //Ex: Desired = 90%, proportion = 91%, interest = 2%. New rate = 4%.
         //Acts as two_slope rate
         
-        //The debt_proportion is used unless the supply proportion is over 1 or the farthest into slope 2 
-        //A proportion in Slope 2 is prioritized        
-        if supply_proportions[i] <= Decimal::one() || ((supply_proportions[i] > Decimal::one() && debt_proportions[i] > Decimal::one()) && supply_proportions[i] < debt_proportions[i]) {
-            //Slope 2
-            if debt_proportions[i] > Decimal::one(){
-                //Ex: 91% > 90%
-                ////0.01 * 100 = 1
-                //1% = 1
-                let percent_over_desired = decimal_multiplication(
-                    decimal_subtraction(debt_proportions[i], Decimal::one())?,
-                    Decimal::percent(100_00),
-                )?;
-                let multiplier = percent_over_desired + Decimal::one();
-                //Change rate of (rate) increase w/ the configuration multiplier
-                let multiplier = multiplier * config.rate_slope_multiplier;
-
-                //Ex cont: Multiplier = 2; Pro_rata rate = 1.8%.
-                //// rate = 3.6%
-                /// 
-                //If its a rate hiked rate we add, not multiply
-                if config.rate_hike_rate.is_some() && rates[i] == config.rate_hike_rate.unwrap() {
-                    two_slope_pro_rata_rates.push(
-                        min(
-                            decimal_multiplication(rates[i], debt_proportions[i])? + decimal_division(multiplier, Decimal::percent(100_00))?,
-                        Decimal::one())
-                    );
-                } else {
-                    two_slope_pro_rata_rates.push(
-                        min(decimal_multiplication(
-                            decimal_multiplication(rates[i], debt_proportions[i])?,
-                            multiplier,
-                        )?, Decimal::one()),
-                    );
-                }
-            } else {
-                //Slope 1
-                two_slope_pro_rata_rates.push(
-                    min(decimal_multiplication(rates[i], debt_proportions[i])?, Decimal::one()),
-                );
-            }
-        } else if supply_proportions[i] > Decimal::one() {
+        //Check if supply_proportions[i] is greater than 100% (i.e. in Slope 2)
+        if supply_proportions[i] > Decimal::one() {
             //Slope 2            
             //Ex: 91% > 90%
             ////0.01 * 100 = 1
@@ -317,6 +268,9 @@ pub fn get_interest_rates(
                     )?, Decimal::one())
                 );
             }
+        } else {
+            //Base Rate
+            two_slope_pro_rata_rates.push(rates[i]);
         }
     }
 
@@ -339,7 +293,7 @@ pub fn get_interest_rates(
             for asset in multi_asset_cap.clone().assets {
                 if let Some((i, _cap)) = basket.clone().collateral_supply_caps.clone().into_iter().enumerate().find(|(_i, cap)| cap.asset_info.equal(&asset)){
                     //Substitute if proportion of multi_asset_cap is greater than 1 and both debt/supply proportions
-                    if multi_cap_proportion > Decimal::one() && multi_cap_proportion > supply_proportions[i] && multi_cap_proportion > debt_proportions[i]{
+                    if multi_cap_proportion > Decimal::one() && multi_cap_proportion > supply_proportions[i]{
                         //Slope 2            
                         //Ex: 91% > 90%
                         ////0.01 * 100 = 1
@@ -366,6 +320,7 @@ pub fn get_interest_rates(
         
     Ok(two_slope_pro_rata_rates)
 }
+
 //Used for accrual & update_basket_tally()
 //This doesn't alter multi-asset caps
 pub fn transform_caps_based_on_volatility(
@@ -415,7 +370,6 @@ fn get_credit_rate_of_change(
     position: &mut Position,
     negative_rate: bool,
     credit_price_rate: Decimal,
-    cdt_liquidity: Option<Uint128>,
 ) -> StdResult<(Decimal, Vec<Decimal>)> {
     let (ratios, _) = match get_cAsset_ratios(storage, env.clone(), querier, position.clone().collateral_assets, config, Some(basket.clone())){
         Ok(ratios) => ratios,
@@ -433,7 +387,7 @@ fn get_credit_rate_of_change(
         Err(_err) => basket.clone().collateral_supply_caps
     };
     
-    match update_rate_indices(storage, querier, env, basket, &mut supply_caps, negative_rate, credit_price_rate, cdt_liquidity){
+    match update_rate_indices(storage, querier, env, basket, &mut supply_caps, negative_rate, credit_price_rate){
         Ok(_ok) => {},
         Err(err) => {
             return Err(StdError::GenericErr {
@@ -514,10 +468,10 @@ pub fn accrue(
         }
     };
     //If liquidity is low or basket oracle is not set, skip accrual
-    let mut skip_accrual: bool = false;
+    let mut skip_credit_price_accrual: bool = false;
     if liquidity_ratio < Decimal::percent(3) || liquidity < MINIMUM_LIQUIDITY || !basket.oracle_set{
         //Skip repayment accrual
-        skip_accrual = true;
+        skip_credit_price_accrual = true;
     }
     
     ////If the credit oracle errors we only skip the repayment price accrual and not error the whole function
@@ -543,7 +497,7 @@ pub fn accrue(
         Ok(assets) => {
             if assets.1[0].price.is_zero() {
                 //Skip repayment accrual
-                skip_accrual = true;
+                skip_credit_price_accrual = true;
                 
                 Decimal::zero()
             } else {
@@ -552,46 +506,47 @@ pub fn accrue(
         }
         Err(_) => {
             //Skip repayment accrual
-            skip_accrual = true;
+            skip_credit_price_accrual = true;
             
             Decimal::zero()
         }
     };
 
+    /////Calculate the potential credit price rate & accrue if not skipped///////
     //Repayment accrual
-    if !skip_accrual {
-        basket.credit_last_accrued = env.block.time.seconds();
+    basket.credit_last_accrued = env.block.time.seconds();
 
-        //We divide w/ the greater number first so the quotient is always 1.__
-        price_difference = {
-            //If market price > than repayment price
-            match credit_TWAP_price.cmp(&basket.clone().credit_price.price){
-                Ordering::Greater => {
-                    negative_rate = true;
-                    decimal_subtraction(
-                        decimal_division(credit_TWAP_price, basket.clone().credit_price.price)?,
-                        Decimal::one(),
-                    )?
-                },
-                Ordering::Less => {
-                    negative_rate = false;
-                    decimal_subtraction(
-                        decimal_division(basket.clone().credit_price.price, credit_TWAP_price)?,
-                        Decimal::one(),
-                    )?
-                },
-                Ordering::Equal => {
-                    negative_rate = false;
-                    Decimal::zero()
-                }
+    //We divide w/ the greater number first so the quotient is always 1.__
+    price_difference = {
+        //If market price > than repayment price
+        match credit_TWAP_price.cmp(&basket.clone().credit_price.price){
+            Ordering::Greater => {
+                negative_rate = true;
+                decimal_subtraction(
+                    decimal_division(credit_TWAP_price, basket.clone().credit_price.price)?,
+                    Decimal::one(),
+                )?
+            },
+            Ordering::Less => {
+                negative_rate = false;
+                decimal_subtraction(
+                    decimal_division(basket.clone().credit_price.price, credit_TWAP_price)?,
+                    Decimal::one(),
+                )?
+            },
+            Ordering::Equal => {
+                negative_rate = false;
+                Decimal::zero()
             }
-        };
+        }
+    };
 
-        //Don't accrue repayment interest if price is within the margin of error
-        if price_difference > basket.clone().cpc_margin_of_error {
-            //Multiply price_difference by the cpc_multiplier
-            credit_price_rate = decimal_multiplication(price_difference, config.cpc_multiplier)?;
+    //Don't accrue repayment interest if price is within the margin of error
+    if price_difference > basket.clone().cpc_margin_of_error {
+        //Multiply price_difference by the cpc_multiplier
+        credit_price_rate = decimal_multiplication(price_difference, config.cpc_multiplier)?;
 
+        if !skip_credit_price_accrual {
             //Calculate rate of change
             let mut applied_rate = credit_price_rate.checked_mul(Decimal::from_ratio(
                 Uint128::from(time_elapsed),
@@ -609,16 +564,17 @@ pub fn accrue(
             }
 
             let mut new_price = basket.credit_price.price;
-            //Negative repayment interest needs to be enabled by the basket
+            //Negative LTV interest needs to be enabled by the basket
             if !negative_rate || basket.negative_rates {
                 new_price = decimal_multiplication(basket.credit_price.price, applied_rate)?;
             } 
 
             basket.credit_price.price = new_price;
-        } else {
-            credit_price_rate = Decimal::zero();
         }
+    } else {
+        credit_price_rate = Decimal::zero();
     }
+    ///////////////////////////////////////////////////
 
     /////Accrue interest to the debt/////      
     //Calc rate_of_change for the position's credit amount
@@ -630,8 +586,7 @@ pub fn accrue(
         basket,
         position,
         negative_rate,
-        credit_price_rate,
-        Some(liquidity),
+        credit_price_rate
     ){
         Ok(rate) => rate,
         Err(err) => {

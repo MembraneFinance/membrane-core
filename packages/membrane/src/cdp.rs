@@ -189,8 +189,6 @@ pub enum QueryMsg {
     },
     /// Returns the contract's Basket
     GetBasket { }, 
-    /// Returns Basket collateral debt caps
-    GetBasketDebtCaps { },
     /// Returns credit redemption rate
     GetCreditRate { },
     /// Returns Basket collateral interest rates
