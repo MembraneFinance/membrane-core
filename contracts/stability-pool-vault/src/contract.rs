@@ -311,14 +311,13 @@ fn enter_vault(
 /// User sends vault_tokens to withdraw the deposit_token from the vault.
 /// 1. We burn vault tokens
 /// 2. send the withdrawn deposit token to the user at a max of the buffer + withdrawable SP stake.
-/// 3. Unstake whatever was withdrawn to ensure the buffer amount.
 ///NOTE: Can't Withdraw more than the buffer unless something is currently unstakeable.
 fn exit_vault(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
 ) -> Result<Response, TokenFactoryError> {
-    let mut config = CONFIG.load(deps.storage)?;
+    let config = CONFIG.load(deps.storage)?;
     let mut assurance_msg = vec![];
 
     //Query claims from the Stability Pool.
@@ -401,12 +400,11 @@ fn exit_vault(
         },
     )?;
     //Calc total TVL in the SP
-    let contract_SP_tvl: Uint128 = asset_pool.deposits.clone().into_iter()
-        .map(|deposit| deposit.amount)
-        .sum::<Decimal>().to_uint_floor();
+    // let contract_SP_tvl: Uint128 = asset_pool.deposits.clone().into_iter()
+    //     .map(|deposit| deposit.amount)
+    //     .sum::<Decimal>().to_uint_floor();
 
     
-
     //Parse deposits and calculate the amount of deposits that are withdrawable
     let withdrawable_amount = asset_pool.deposits.clone().into_iter()
         .filter(|deposit| deposit.unstake_time.is_some() && deposit.unstake_time.unwrap() + SECONDS_PER_DAY <= env.block.time.seconds())
@@ -421,22 +419,15 @@ fn exit_vault(
 
     //If the contract will have less deposit tokens than the amount to withdraw
     // - Send the contract's balance to the user
-    // - Unstake the desired withdrawal amount or the contract's TVL from the SP
+    // - Withdraw the withdrawable_amount from the SP
     // - Calc the amount of vault tokens that represent the deposit_tokens actually being sent to the user, burn these
     // - Send back the rest of the vault tokens
-    if contract_balance_post_SP_withdrawal < deposit_tokens_to_withdraw {        
-        //Add the withdrawable amount to the deposit tokens to withdraw
-        //bc the SP withdraws & unstakes in the same msg 
-        deposit_tokens_to_withdraw += withdrawable_amount;
-        //Set unstake amount to either the SP TVL or the desired withdrawal amount
-        let unstake_amount = deposit_tokens_to_withdraw.min(contract_SP_tvl);
-        panic!("IN CONDITIONAL unstake_amount: {}, deposit_tokens_to_withdraw: {}, contract_SP_tvl: {}", unstake_amount, deposit_tokens_to_withdraw, contract_SP_tvl);
-
+    if contract_balance_post_SP_withdrawal < deposit_tokens_to_withdraw {  
         //Unstake 
         let unstake_tokens_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: config.stability_pool_contract.to_string(),
             msg: to_json_binary(&StabilityPoolExecuteMsg::Withdraw {
-                amount: unstake_amount,
+                amount: withdrawable_amount,
             })?,
             funds: vec![],
         });
@@ -546,16 +537,10 @@ fn exit_vault(
             msg: to_json_binary(&ExecuteMsg::RateAssurance {  })?,
             funds: vec![],
         }));
-    } 
-
-    //Add the withdrawable amount to the deposit tokens to withdraw
-    //bc the SP withdraws & unstakes in the same msg 
-    deposit_tokens_to_withdraw += withdrawable_amount;    
-    //We're withdrawing to replenish the buffer
+    }
     
-    //Set unstake amount to either the SP TVL or deposit_tokens_to_withdraw
-    let unstake_amount = deposit_tokens_to_withdraw.min(contract_SP_tvl); //change this to withdrawable?
-    panic!("unstake_amount: {}, deposit_tokens_to_withdraw: {}, contract_SP_tvl: {}", unstake_amount, deposit_tokens_to_withdraw, contract_SP_tvl);
+    //Set unstake amount to either the desired withdrawal amount or the withdrawable amount
+    let unstake_amount = deposit_tokens_to_withdraw.min(withdrawable_amount);
     //Unstake the deposit tokens from the Stability Pool
     let unstake_tokens_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
         contract_addr: config.stability_pool_contract.to_string(),
@@ -571,6 +556,7 @@ fn exit_vault(
         .add_attribute("method", "exit_vault")
         .add_attribute("vault_tokens", vault_tokens)
         .add_attribute("deposit_tokens_to_withdraw", deposit_tokens_to_withdraw)
+        .add_attribute("withdrawable_amount", withdrawable_amount)
         .add_message(burn_vault_tokens_msg)
         .add_message(unstake_tokens_msg)
         .add_message(send_deposit_tokens_msg)
