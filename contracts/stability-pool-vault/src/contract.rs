@@ -430,6 +430,8 @@ fn exit_vault(
         deposit_tokens_to_withdraw += withdrawable_amount;
         //Set unstake amount to either the SP TVL or the desired withdrawal amount
         let unstake_amount = deposit_tokens_to_withdraw.min(contract_SP_tvl);
+        panic!("IN CONDITIONAL unstake_amount: {}, deposit_tokens_to_withdraw: {}, contract_SP_tvl: {}", unstake_amount, deposit_tokens_to_withdraw, contract_SP_tvl);
+
         //Unstake 
         let unstake_tokens_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: config.stability_pool_contract.to_string(),
@@ -552,7 +554,8 @@ fn exit_vault(
     //We're withdrawing to replenish the buffer
     
     //Set unstake amount to either the SP TVL or deposit_tokens_to_withdraw
-    let unstake_amount = deposit_tokens_to_withdraw.min(contract_SP_tvl);
+    let unstake_amount = deposit_tokens_to_withdraw.min(contract_SP_tvl); //change this to withdrawable?
+    panic!("unstake_amount: {}, deposit_tokens_to_withdraw: {}, contract_SP_tvl: {}", unstake_amount, deposit_tokens_to_withdraw, contract_SP_tvl);
     //Unstake the deposit tokens from the Stability Pool
     let unstake_tokens_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
         contract_addr: config.stability_pool_contract.to_string(),
