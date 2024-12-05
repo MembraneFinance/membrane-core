@@ -24,36 +24,17 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v3
 
-      
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-          target: wasm32-unknown-unknown
           override: true
 
-      - name: Build contracts
-        run: |
-          for contract in contracts/*; do
-            if [ -d "$contract" ]; then
-              echo "Building $contract..."
-              cd $contract
-              cargo build --release --target wasm32-unknown-unknown
-              cd ../..
-            fi
-          done
+      - name: Install cargo make
+        uses: davidB/rust-cargo-make@v1
 
-      - name: Create artifacts directory
-        run: mkdir -p artifacts
-
-      - name: Optimize and collect wasm files
-        run: |
-          for contract in contracts/*; do
-            if [ -d "$contract" ]; then
-              name=$(basename $contract)
-              wasm-opt -Oz target/wasm32-unknown-unknown/release/$name.wasm -o artifacts/$name.wasm
-            fi
-          done
+      - name: Compile contracts to wasm
+        run: cargo make rust-optimizer
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
