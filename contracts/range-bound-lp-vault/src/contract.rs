@@ -1,5 +1,6 @@
 use std::cmp::min;
 use std::convert::TryInto;
+use std::env;
 use std::str::FromStr;
 
 #[cfg(not(feature = "library"))]
@@ -12,22 +13,25 @@ use membrane::math::{decimal_multiplication, decimal_division};
 use membrane::oracle::PriceResponse;
 
 use crate::error::TokenFactoryError;
-use crate::state::{CLAIM_TRACKER, TOKEN_RATE_ASSURANCE, TokenRateAssurance, CONFIG, OWNERSHIP_TRANSFER, VAULT_TOKEN};
+use crate::state::{IntentProp, TokenRateAssurance, UserIntentState, CDP_REPAY_PROPAGATION, CLAIM_TRACKER, CONFIG, INTENT_PROPAGATION, OWNERSHIP_TRANSFER, TOKEN_RATE_ASSURANCE, USER_INTENT_STATE, VAULT_TOKEN};
 use membrane::range_bound_lp_vault::{
-    Config, ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg
+    Config, ExecuteMsg, InstantiateMsg, LeaveTokens, MigrateMsg, QueryMsg, UserIntentResponse
 };
 use membrane::stability_pool_vault::{
     calculate_base_tokens, calculate_vault_tokens
 };
 use membrane::osmosis_proxy::ExecuteMsg as OP_ExecuteMsg;
+use membrane::cdp::{BasketPositionsResponse, ExecuteMsg as CDP_ExecuteMsg, QueryMsg as CDP_QueryMsg};
 use membrane::oracle::QueryMsg as Oracle_QueryMsg;
-use membrane::types::{AssetInfo, ClaimTracker, RangePositions, VTClaimCheckpoint};
+use membrane::types::{AssetInfo, ClaimTracker, RangeBoundUserIntents, RangePositions, UserInfo, VTClaimCheckpoint};
 use osmosis_std::types::osmosis::tokenfactory::v1beta1::{self as TokenFactory};
+use osmosis_std::types::osmosis::poolmanager::v1beta1::{MsgSwapExactAmountIn, SwapAmountInRoute};
 use osmosis_std::types::osmosis::concentratedliquidity::v1beta1::{self as CL, FullPositionBreakdown};
 
 // version info for migration info
 const CONTRACT_NAME: &str = "crates.io:range-bound-lp-vault";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const MAX_LIMIT: u32 = 32;
 
 //Reply IDs
 const SWAP_ADD_TO_FLOOR_REPLY_ID: u64 = 1u64;
@@ -37,9 +41,17 @@ const ADD_TO_CEILING_REPLY_ID: u64 = 4u64;
 const CL_POSITION_CREATION_REPLY_ID: u64 = 5u64;
 const SWAP_TO_FLOOR_ADD_BOTH_REPLY_ID: u64 = 6u64;
 const SWAP_TO_CEILING_ADD_BOTH_REPLY_ID: u64 = 7u64;
+const SWAP_FOR_CDP_REPAY_REPLY_ID: u64 = 8u64;
+const MANAGE_ERROR_DENIAL_REPLY_ID: u64 = 99u64;
+
+//Reply IDs for intents
+const SWAP_AFTER_EXIT_FOR_CDP_REPAY_REPLY_ID: u64 = 9u64;
+const PURCHASE_POST_EXIT_REPLY_ID: u64 = 10u64;
+const PARSE_PURCHASE_INTENTS_REPLY_ID: u64 = 11u64;
+
 
 //NOTE: When we add a WITHDRAWAL_PERIOD, it'll be added as a state object that holds User's VTs and saves their unstake time. 
-    //Then when its time to withdraw, the contract will use & burn the VTs in the contract and send the user their assets.
+//Then when its time to withdraw, the contract will use & burn the VTs in the contract and send the user their assets.
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -131,9 +143,11 @@ pub fn execute(
 ) -> Result<Response, TokenFactoryError> {
     match msg {
         ExecuteMsg::UpdateConfig { owner, osmosis_proxy_contract_addr, oracle_contract_addr  } => update_config(deps, info, owner, osmosis_proxy_contract_addr, oracle_contract_addr),
-        ExecuteMsg::EnterVault { } => enter_vault(deps, env, info),
-        ExecuteMsg::ExitVault {  } => exit_vault(deps, env, info),
+        ExecuteMsg::EnterVault { leave_vault_tokens_in_vault } => enter_vault(deps, env, info, leave_vault_tokens_in_vault),
+        ExecuteMsg::ExitVault { send_to } => exit_vault(deps, env, info, send_to),
         ExecuteMsg::ManageVault { rebalance_sale_max } => manage_vault(deps, env, info, rebalance_sale_max),
+        ExecuteMsg::SetUserIntents { intents, reduce_vault_tokens } => set_user_intents(deps, env, info, intents, reduce_vault_tokens),
+        ExecuteMsg::FulFillUserIntents { users } => fulfill_intents(deps, env, info, users),
         ExecuteMsg::CrankRealizedAPR { } => crank_realized_apr(deps, env, info),
         ExecuteMsg::RateAssurance { } => rate_assurance(deps, env, info),
         ExecuteMsg::DepositFee { } => deposit_fee(deps, env, info),
@@ -401,21 +415,23 @@ fn get_range_token_prices(
 /// ...accepting 50:50 allows the App to swap into deposits or accept both assets...
 /// ...instead of always swapping into CDT and then the vault swapping back to balance.
 /// 50:50 in VALUE. If we do amount, the CDT side would be overweight bc the range is (expected to be) underpeg.
+/// 
+/// //Enter 100% CDT
 fn enter_vault(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
+    leave_vault_tokens_in_vault: Option<LeaveTokens>
 ) -> Result<Response, TokenFactoryError> {
     let config = CONFIG.load(deps.storage)?;
 
     //Assert the sender sent both assets in the correct order
-    if info.funds.len() != 2 || info.funds[0].denom != config.range_tokens.ceiling_deposit_token || info.funds[1].denom != config.range_tokens.floor_deposit_token {
-        return Err(TokenFactoryError::CustomError { val: format!("Need to send both range assets in the correct order. Ceiling token first: {}, Floor token second: {} ",  config.clone().range_tokens.ceiling_deposit_token,  config.clone().range_tokens.floor_deposit_token) });
+    if info.funds.len() != 1 || info.funds[0].denom != config.range_tokens.ceiling_deposit_token {
+        return Err(TokenFactoryError::CustomError { val: format!("Need to send CDT only: {}",  config.clone().range_tokens.ceiling_deposit_token) });
     }
     
     //Get the amount of deposit tokens sent
     let ceiling_deposit_amount = info.funds[0].amount;
-    let floor_deposit_amount = info.funds[1].amount;
 
     //Get total_deposit_tokens & prices
     let (
@@ -430,16 +446,10 @@ fn enter_vault(
 
     //Set the value sent
     let ceiling_value_sent = ceiling_price.get_value(ceiling_deposit_amount)?;
-    let floor_value_sent = floor_price.get_value(floor_deposit_amount)?;
-    let value_ratio = decimal_division(ceiling_value_sent, floor_value_sent)?;
 
-    //Check that the value sent is within 1% of each other
-    if value_ratio > Decimal::percent(101) || value_ratio < Decimal::percent(99) {
-        return Err(TokenFactoryError::CustomError { val: format!("The value of the assets sent must be within 1% of each other. Ceiling value: {}, Floor value: {}", ceiling_value_sent, floor_value_sent) });
-    }
 
     //Normalize the deposit amounts into the ceiling token (CDT)
-    let normalized_deposit_amount = ceiling_price.get_amount(ceiling_value_sent + floor_value_sent)?;
+    let normalized_deposit_amount = ceiling_value_sent;
 
     //////Calculate the amount of vault tokens to mint////
     //Get the total amount of vault tokens circulating
@@ -471,17 +481,73 @@ fn enter_vault(
     
 
     let mut msgs = vec![];
-    //Mint vault tokens to the sender
-    let mint_vault_tokens_msg: CosmosMsg = TokenFactory::MsgMint {
-        sender: env.contract.address.to_string(), 
-        amount: Some(osmosis_std::types::cosmos::base::v1beta1::Coin {
-            denom: config.vault_token.clone(),
-            amount: vault_tokens_to_distribute.to_string(),
-        }), 
-        mint_to_address: info.sender.to_string(),
-    }.into();
-    //UNCOMMENT
-    msgs.push(mint_vault_tokens_msg);
+    let mut vault_tokens_to_send = vault_tokens_to_distribute;
+
+    //Check if we are minting any tokens to the contract
+    if let Some( mut intent_info ) = leave_vault_tokens_in_vault {
+        //Ensure % is less than 100
+        let percent_to_send_to_vault = min(intent_info.percent_to_leave, Decimal::one());
+        //Calc the amount of vault tokens to leave in the vault
+        let vault_tokens_to_leave = decimal_multiplication(
+            percent_to_send_to_vault,
+            vault_tokens_to_distribute
+        )?.to_uint_floor();
+        //If the user wants to leave some vault tokens in the vault
+        if !vault_tokens_to_leave.is_zero() {
+            //Calc the amount of vault tokens to send to the user
+            vault_tokens_to_send = vault_tokens_to_distribute - vault_tokens_to_leave;
+            //Mint vault tokens to the contract
+            let mint_vault_tokens_to_contract_msg: CosmosMsg = TokenFactory::MsgMint {
+                sender: env.contract.address.to_string(), 
+                amount: Some(osmosis_std::types::cosmos::base::v1beta1::Coin {
+                    denom: config.vault_token.clone(),
+                    amount: vault_tokens_to_leave.to_string(),
+                }), 
+                mint_to_address: env.contract.address.to_string(),
+            }.into();
+            //UNCOMMENT
+            msgs.push(mint_vault_tokens_to_contract_msg);
+    
+
+            //Set user.
+            //if info.sender is the CDP contract, use the user from the Intents struct
+            let user = if info.sender.to_string() == String::from("osmo1gy5gpqqlth0jpm9ydxlmff6g5mpnfvrfxd3mfc8dhyt03waumtzqt8exxr") {
+                intent_info.intent_for_tokens.user.to_string()
+            } else {
+                info.sender.to_string()
+            };
+            //Add the vault tokens to the user's state if they already have it.
+            //Create or update the user's intent state
+            USER_INTENT_STATE.update(deps.storage, &user, |state| -> Result<UserIntentState, TokenFactoryError> {
+                if let Some(mut user_intent_state) = state {
+                    user_intent_state.vault_tokens += vault_tokens_to_leave;
+                    return Ok(user_intent_state);
+                } else {
+                    let user_intent_state = UserIntentState {
+                        vault_tokens: vault_tokens_to_leave,
+                        intents: intent_info.intent_for_tokens,
+                        //Unused until withdrawal period is added
+                        unstake_time: 0u64,
+                    };
+                    return Ok(user_intent_state)
+                }
+            })?;
+        }
+    }
+    //Mint remaining vault tokens to the sender
+    if !vault_tokens_to_send.is_zero() {
+        let mint_vault_tokens_msg: CosmosMsg = TokenFactory::MsgMint {
+            sender: env.contract.address.to_string(), 
+            amount: Some(osmosis_std::types::cosmos::base::v1beta1::Coin {
+                denom: config.vault_token.clone(),
+                amount: vault_tokens_to_send.to_string(),
+            }), 
+            mint_to_address: info.sender.to_string(),
+        }.into();
+        //UNCOMMENT
+        msgs.push(mint_vault_tokens_msg);
+
+    }
 
     //Update the total vault tokens
     VAULT_TOKEN.save(deps.storage, &(total_vault_tokens + vault_tokens_to_distribute))?;
@@ -498,12 +564,19 @@ fn enter_vault(
         }));
     }
 
+    //Add a manage vault msg that replys on error
+    let manage_vault_msg: CosmosMsg = WasmMsg::Execute {
+        contract_addr: env.contract.address.to_string(),
+        msg: to_json_binary(&ExecuteMsg::ManageVault { rebalance_sale_max: None })?,
+        funds: vec![],
+    };
+    let manage_submsg = SubMsg::reply_on_error(manage_vault_msg, MANAGE_ERROR_DENIAL_REPLY_ID);
+
     //Create Response
     let res = Response::new()
         .add_attribute("method", "enter_vault")
-        .add_attribute("ceiling_value_sent", ceiling_value_sent.to_string())
-        .add_attribute("floor_value_sent", floor_value_sent.to_string())
-        .add_attribute("normalized_deposit_amount", normalized_deposit_amount)
+        .add_attribute("value_sent", ceiling_value_sent.to_string())
+        .add_attribute("deposit_amount", normalized_deposit_amount)
         .add_attribute("vault_tokens_to_distribute", vault_tokens_to_distribute)
         .add_messages(msgs);
 
@@ -513,14 +586,20 @@ fn enter_vault(
 /// Exit vault in the current ratio of assets owned (LP + balances) by withdrawing pro-rata CL shares.
 /// The App can swap into a single token and give value options based on swap rate.
 /// 1. We burn vault tokens
-/// 2. Send the withdrawn tokens to the user
+/// 2. Send the withdrawn tokens to the user/send_to address
 fn exit_vault(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
+    send_to: Option<String>
 ) -> Result<Response, TokenFactoryError> {
     let config = CONFIG.load(deps.storage)?;
     let mut msgs = vec![];
+    //Set the send_to address
+    let send_to = match send_to {
+        Some(address) => address,
+        None => info.sender.to_string(),
+    };
     //Get total_deposit_tokens & prices
     let (
         total_deposit_tokens,
@@ -637,7 +716,7 @@ fn exit_vault(
 
     //Send the withdrawn tokens to the user
     let send_deposit_tokens_msg: CosmosMsg = BankMsg::Send {
-        to_address: info.sender.to_string(),
+        to_address: send_to,
         amount: user_withdrawn_coins.clone(),
     }.into();
     //Add to msgs
@@ -995,6 +1074,315 @@ fn manage_vault(
     )
 }
 
+/// Set intents for a user. They must send vault tokens or have a non-zero balance in state.
+/// NOTE: Since the CDP will repay with these assets for you during liquidation, we don't have autoRepay intents.
+/// NOTE: You either purchase or compound an asset, can't split it.
+fn set_intents (
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    mut intents: RangeBoundUserIntents,
+    reduce_vault_tokens: Option<Uint128>, 
+) -> Result<Response, TokenFactoryError> {
+    //Load config
+    let config = CONFIG.load(deps.storage)?;
+    //Load user intents state
+    let mut user_intent_state = match USER_INTENT_STATE.load(deps.storage, info.clone().sender.to_string()){
+        Ok(mut state) => {
+            //If the user has intents set, update them
+            state.intents = intents;
+
+            //Make sure the yield distribution isn't over 100%
+            if state.intents.purchase_intents.into_iter().map(|intent| intent.yield_percent).sum() > Decimal::one() {
+                return Err(TokenFactoryError::CustomError { val: String::from("Yield distribution cannot exceed 100%") });
+            }
+            //Make sure intents aren't empty
+            if state.intents.purchase_intents.len() == 0 {
+                return Err(TokenFactoryError::CustomError { val: String::from("Intents cannot be empty") });
+            }
+
+            //Return updated
+            state
+        },
+        Err(_) => {
+            
+            let total_vault_tokens = VAULT_TOKEN.load(deps.storage)?;
+
+            //Get the total deposit tokens
+            let (
+                total_deposit_tokens,
+                _, 
+                _, _, _, _, _
+            ) = get_total_deposit_tokens(deps.as_ref(), env.clone(), config.clone())?;
+            //Calc the rate of vault tokens to deposit tokens
+            let btokens_per_one = calculate_base_tokens(
+                Uint128::new(1_000_000_000_000), 
+                total_deposit_tokens, 
+                total_vault_tokens
+            )?;
+            //Set conversion rate
+            intents.last_conversion_rate = btokens_per_one;
+            
+            //Make sure the yield distribution isn't over 100%
+            if intents.purchase_intents.into_iter().map(|intent| intent.yield_percent).sum() > Decimal::one() {
+                return Err(TokenFactoryError::CustomError { val: String::from("Yield distribution cannot exceed 100%") });
+            }
+            //Make sure intents aren't empty
+            if intents.purchase_intents.len() == 0 {
+                return Err(TokenFactoryError::CustomError { val: String::from("Intents cannot be empty") });
+            }
+            //Return state
+            UserIntentState {
+                vault_tokens: Uint128::zero(),
+                intents,
+                //Unused until withdrawal period is added
+                unstake_time: 0u64,
+            }
+        },
+    };
+    //If user vault tokens are zero, they must send vault tokens
+    if user_intent_state.vault_tokens.is_zero() {
+        if info.funds.len() != 1 {
+            return Err(TokenFactoryError::CustomError { val: String::from("User must send vault tokens to set intents") });
+        }
+        if info.funds[0].denom != config.vault_token {
+            return Err(TokenFactoryError::CustomError { val: String::from("User must send vault tokens to set intents") });
+        }
+        user_intent_state.vault_tokens = info.funds[0].amount;
+    } else {
+        //Add the vault tokens sent to the user's vault tokens
+        if info.funds.len() == 1 && info.funds[0].denom == config.vault_token {
+            user_intent_state.vault_tokens += info.funds[0].amount;
+        }
+
+        //Reduce the user's vault tokens if requested
+        if let Some(reduce_amount) = reduce_vault_tokens {
+            if reduce_amount > user_intent_state.vault_tokens {
+                return Err(TokenFactoryError::CustomError { val: String::from("Cannot reduce vault tokens below 0") });
+            }
+            user_intent_state.vault_tokens -= reduce_amount;
+        }
+    }
+
+    //
+
+    //Save user intents state
+    USER_INTENT_STATE.save(deps.storage, info.sender.to_string(), &user_intent_state)?;
+
+    //Create response
+    Ok(Response::new()
+        .add_attribute("method", "set_intents")
+        .add_attribute("user", info.sender)
+        .add_attribute("vault_tokens", user_intent_state.vault_tokens)
+        .add_attribute("intents", format!("{:?}", user_intent_state.intents))
+    )
+}
+
+/// Fulfill intents for user(s). Send fees to the caller. Update last conversion rate.
+fn fulfill_intents(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    users: Vec<String>,
+) -> Result<Response, TokenFactoryError> {
+    //Load config
+    let config = CONFIG.load(deps.storage)?;
+    //init submsgs
+    let mut submsgs: Vec<SubMsg> = vec![];
+    
+    //Get total_deposit_tokens
+    let (
+        total_deposit_tokens,
+        _, 
+        _, _, _, _, _
+    ) = get_total_deposit_tokens(deps.as_ref(), env.clone(), config.clone())?;
+
+    //Load vault token total from state
+    let total_vault_tokens = VAULT_TOKEN.load(deps.storage)?;
+    
+    ///Check current conversion rate///
+    /// If the conversion rate is greater than the user's last, exit the increased % and fulfill the compound/purchase intents///    
+    //Calc the rate of vault tokens to deposit tokens
+    let current_conversion_rate = calculate_base_tokens(
+        Uint128::new(1_000_000_000_000), 
+        total_deposit_tokens, 
+        total_vault_tokens
+    )?;
+
+    //Iterate over users
+    for user in users {
+
+        //Validate user
+        let mut user_intent_state = USER_INTENT_STATE.load(deps.storage, user.clone())?;
+        //Shouldn't be possible
+        if user_intent_state.intents.purchase_intents.len() == 0 { 
+            continue;
+        }
+
+        //If the current rate is greater than the user's last rate, exit the increased % and fulfill the compound/purchase intents
+        match decimal_division(
+            Decimal::from_ratio(current_conversion_rate, Uint128::one()),
+            Decimal::from_ratio(user_intent_state.intents.last_conversion_rate, Uint128::one())
+        ) {
+            Ok(rate) => {
+                if rate > Decimal::one() {
+                    let profit = rate - Decimal::one();
+                    let total_vault_tokens_to_exit= user_intent_state.vault_tokens * profit;
+                    //Subtract the exit amount from the user's vault tokens
+                    user_intent_state.vault_tokens -= total_vault_tokens_to_exit;
+                    //Calc the amount that goes to the caller as a fee
+                    let vault_tokens_to_caller = total_vault_tokens_to_exit * user_intent_state.fee_to_caller;
+                    //Calc the amount that goes to the user
+                    let vault_tokens_to_exit_for_user = total_vault_tokens_to_exit - vault_tokens_to_caller;
+                           
+                    //Create exit vault msg for the fee amount
+                    let exit_vault_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+                        contract_addr: env.contract.address.to_string(),
+                        msg: to_json_binary(&ExecuteMsg::ExitVault { send_to: Some(info.sender.clone().to_string()) })?,
+                        funds: vec![
+                            Coin {
+                                denom: config.vault_token.clone(),
+                                amount: vault_tokens_to_caller.clone(),
+                            },
+                        ],
+                    });
+
+                    //Exit and send the fee to the caller
+                    let caller_fee_exit_submsg = SubMsg::new(exit_vault_msg);
+                    //Add to submsgs
+                    submsgs.push(caller_fee_exit_submsg);
+
+                    //Exit the vault with the user's profit
+                    let exit_vault_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+                        contract_addr: env.contract.address.to_string(),
+                        msg: to_json_binary(&ExecuteMsg::ExitVault { send_to: None })?,
+                        funds: vec![
+                            Coin {
+                                denom: config.vault_token.clone(),
+                                amount: vault_tokens_to_exit_for_user.clone(),
+                            },
+                        ],
+                    });
+
+                    //Swap CDT to fulfill the intents post-exit//
+                    let fulfill_submsg = SubMsg::reply_on_success(exit_vault_msg, PURCHASE_POST_EXIT_REPLY_ID);
+                    //Add to submsgs
+                    submsgs.push(fulfill_submsg);
+                
+                    //Save intent data for the reply
+                    INTENT_PROPAGATION.save(deps.storage, &IntentProp {
+                        intents: user_intent_state.clone().intents,
+                        prev_cdt_balance: deps.querier.query_balance(env.contract.address.to_string(), config.range_tokens.ceiling_deposit_token)?.amount,
+                        prev_usdc_balance: deps.querier.query_balance(env.contract.address.to_string(), config.range_tokens.floor_deposit_token)?.amount,
+                    })?;
+                    
+                    //Set the user's last conversion rate
+                    user_intent_state.intents.last_conversion_rate = current_conversion_rate;
+                    
+                    //Update the user's state
+                    USER_INTENT_STATE.save(deps.storage, user.clone(), &user_intent_state)?;
+                } else {
+                    //Nothing to profit take, error
+                    return Err(TokenFactoryError::CustomError { val: format!("Current conversion rate: {} isn't greater than the user's last rate: {}", current_conversion_rate, user_intent_state.intents.last_conversion_rate) });
+                }
+            },
+            Err(err) => {
+                //Error calculating rate
+                return Err(TokenFactoryError::CustomError { val: format!("Error calculating profit percentage: {}", err) });
+            }
+        };
+    }
+
+    //Create response
+    Ok(Response::new()
+        .add_attribute("method", "fulfill_intents")
+        .add_attribute("users", format!("{:?}", users))
+        .add_submessages(submsgs)
+    )
+}
+
+/// Repay for a user in the Positions contract
+fn repay(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    user_info: UserInfo,
+    mut repayment: Uint128, //This is the amount of the deposit asset to repay
+) -> Result<Response, ContractError> {
+    //Assert sender is the Positions contract
+    if info.sender.to_string() != String::from("osmo1gy5gpqqlth0jpm9ydxlmff6g5mpnfvrfxd3mfc8dhyt03waumtzqt8exxr") {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    //Load config
+    let config = CONFIG.load(deps.storage)?;
+    //Load user's intent state
+    let mut user_intent_state = USER_INTENT_STATE.load(deps.storage, user_info.position_owner)?;
+
+    let mut submsgs = vec![];
+    let attrs = vec![
+        attr("method", "repay"),
+        attr("user_info", user_info.to_string()),
+    ];
+
+    //Load total vault token supply
+    let total_vault_tokens = VAULT_TOKEN.load(deps.storage)?;
+    
+    //Get total deposit tokens
+    let (
+        total_deposit_tokens,
+        _, 
+        _,
+        _, 
+        _,
+        _, 
+        _
+    ) = get_total_deposit_tokens(deps, env.clone(), config.clone())?;
+
+    //Get the expected_exit_amount of the user's vault token total
+    let users_total_base_tokens = calculate_base_tokens(
+        user_intent_state.vault_tokens, 
+        total_deposit_tokens, 
+        total_vault_tokens
+    )?;
+    
+    //Calculate how much to repay
+    let repayment = min(repayment, users_total_base_tokens);
+
+    //Calculate the amount of vault tokens to exit
+    let vault_tokens_to_exit = calculate_vault_tokens(
+        base_tokens, 
+        total_staked_amount, 
+        vault_token_supply
+    )?;
+    //Update user intent state
+    user_intent_state.vault_tokens -= vault_tokens_to_exit;
+
+    //Save user intent state
+    USER_INTENT_STATE.save(deps.storage, user_info.position_owner.clone(), &user_intent_state)?;
+
+    //Create exit vault msg    
+    let exit_vault_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+        contract_addr: env.contract.address.to_string(),
+        msg: to_json_binary(&ExecuteMsg::ExitVault { send_to: None })?,
+        funds: vec![
+            Coin {
+                denom: config.vault_token.clone(),
+                amount: vault_tokens_to_exit.clone(),
+            },
+        ],
+    });
+    //Add to submsgs
+    submsgs.push(SubMsg::reply_on_success(exit_vault_msg, SWAP_AFTER_EXIT_FOR_CDP_REPAY_REPLY_ID));
+    
+    //Create response
+    Ok(Response::new()
+        .add_attributes(attrs)
+        .add_attribute("vault_tokens_to_exit", vault_tokens_to_exit)
+        .add_submessages(submsgs)
+    )
+}
+
 /// Update contract configuration
 /// This function is only callable by the owner
 fn update_config(
@@ -1115,9 +1503,49 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::DepositTokenConversion { deposit_token_value } => to_json_binary(&query_deposit_token_conversion(deps, env, deposit_token_value)?),
         QueryMsg::ClaimTracker {} => to_json_binary(&CLAIM_TRACKER.load(deps.storage)?),
         QueryMsg::TotalTVL {  } => to_json_binary(&query_vault_token_underlying(deps, env, VAULT_TOKEN.load(deps.storage)?)?),
+        QueryMsg::UserIntentState { start_after, limit, users } => to_json_binary(&query_user_intent_state(deps, env, start_after, limit, users)?),
     }
 }
+fn query_user_intent_state(
+    deps: Deps,
+    env: Env,
+    start_after: Option<String>,
+    limit: Option<u32>,
+    // Users
+    user: Vec<String>,
+)-> StdResult<Vec<UserIntentResponse>> {
+    let limit = limit.unwrap_or(MAX_LIMIT) as usize;
 
+    let start = if let Some(start) = start_after {
+        Some(Bound::exclusive(start))
+    } else {
+        None
+    };
+
+    if user.len() > 0 {
+        return user
+            .into_iter()
+            .map(|user| {
+                let intent = USER_INTENT_STATE.load(deps.storage, user.clone())?;
+                Ok(UserIntentResponse {
+                    user,
+                    intent,
+                })
+            })
+            .collect();
+    } else {
+        return USER_INTENT_STATE
+            .range(deps.storage, start, None, Order::Ascending)
+            .take(limit)
+            .map(|item| {
+                let (k, v) = item?;
+                Ok(UserIntentResponse {
+                    user: k,
+                    intent: v,
+                })
+            }).collect();
+    }
+}
 /// Return vault token amount conversion amount for a value of deposit tokens
 fn query_deposit_token_conversion(
     deps: Deps,
@@ -1192,9 +1620,406 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response> {
         SWAP_TO_FLOOR_ADD_BOTH_REPLY_ID => handle_swap_to_floor_add_to_both_reply(deps, env, msg),
         SWAP_TO_CEILING_ADD_BOTH_REPLY_ID => handle_swap_to_ceiling_add_to_both_reply(deps, env, msg),
         CL_POSITION_CREATION_REPLY_ID => handle_cl_position_creation_reply(deps, env, msg),
+        SWAP_AFTER_EXIT_FOR_CDP_REPAY_REPLY_ID => handle_repay_and_swap_after_exit_reply(deps, env, msg),
+        SWAP_FOR_CDP_REPAY_REPLY_ID => handle_repay_after_swap_reply(deps, env, msg),
+        MANAGE_ERROR_DENIAL_REPLY_ID => Ok(Response::new().add_attribute("method", "handle_error_denial")),
         id => Err(StdError::generic_err(format!("invalid reply id: {}", id))),
     }
 }
+
+//Purchase post exit for the purchase intents
+fn handle_purchase_post_exit_reply(
+    deps: DepsMut,
+    env: Env,
+    msg: Reply,
+) -> StdResult<Response> {
+    match msg.result.into_result() {
+        Ok(_) => {
+            let mut submsgs = vec![];
+            //Load state
+            let config = CONFIG.load(deps.storage)?;
+
+            //Load Intents propagation
+            let intent_prop = INTENT_PROPAGATION.load(deps.storage)?;
+
+            //Calc newly added balances
+            let current_cdt_balance = deps.querier.query_balance(env.contract.address.into(), config.range_tokens.ceiling_deposit_token)?.amount;
+            let current_usdc_balance = deps.querier.query_balance(env.contract.address.into(), config.range_tokens.floor_deposit_token)?.amount;
+            let new_cdt_balance = current_cdt_balance - intent_prop.prev_cdt_balance;
+            let new_usdc_balance = current_usdc_balance - intent_prop.prev_usdc_balance;
+
+            //Update current balances
+            INTENT_PROPAGATION.save(deps.storage, &IntentProp {
+                intents: intent_prop.intents,
+                prev_cdt_balance: current_cdt_balance,
+                prev_usdc_balance: current_usdc_balance,
+            })?;
+            //Init available balance trackers
+            let mut available_cdt_balance = new_cdt_balance;
+            let mut available_usdc_balance = new_usdc_balance;
+            //Are we buying an asset and sending it to the user?              
+            for purchase_intent in intent_prop.intents.purchase_intents {
+                //Calc the amount of USDC to sell
+                let usdc_to_sell = new_usdc_balance * purchase_intent.yield_percent;
+                let cdt_to_sell = new_cdt_balance * purchase_intent.yield_percent;
+                //Update available balances
+                //these swap & zero out instead of error if there is overflow///
+                available_cdt_balance = match available_cdt_balance.checked_sub(cdt_to_sell){
+                    Ok(diff) => diff,
+                    Err(_) => {
+                        cdt_to_sell = available_cdt_balance;
+                        Uint128::zero()
+                    }
+                };
+                available_usdc_balance = match available_usdc_balance.checked_sub(usdc_to_sell){
+                    Ok(diff) => diff,
+                    Err(_) => {
+                        usdc_to_sell = available_usdc_balance;
+                        Uint128::zero()
+                    }
+                };
+
+                //Swap USDC to the desired asset & compound if necessary
+                if !usdc_to_sell.is_zero() {
+                    /////Swap USDC to the desired asset///
+                    if let Some(routes) = purchase_intent.route {
+                        //Set the swap route
+                        let routes = routes.usdc_route;
+                        //Swap USDC using given route
+                        let swap_to_desired: CosmosMsg = MsgSwapExactAmountIn {
+                            sender: env.contract.address.to_string(),
+                            routes,
+                            token_in: Some(osmosis_std::types::cosmos::base::v1beta1::Coin {
+                                amount: usdc_to_sell.to_string(),
+                                denom: config.range_tokens.floor_deposit_token.clone(),
+                            }),
+                            token_out_min_amount: "1".to_string(), //We don't limit the min amount for misc. assets (i.e. max slippage at 100%)
+                            
+                        }.into();
+                        //Add to msgs as SubMsg
+                        submsgs.push(SubMsg::new(swap_to_desired));
+                        //Post swap we parse thru intents again in a reply & send or compound the desired asset
+
+
+                    } else {
+                        //Swap using default route
+                        let swap_to_desired: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+                            contract_addr: config.osmosis_proxy_contract_addr.to_string(),
+                            msg: to_json_binary(&OP_ExecuteMsg::ExecuteSwaps {
+                                token_out: purchase_intent.desired_asset.clone(),
+                                max_slippage: purchase_intent.slippage.unwrap_or_else(|| Decimal::percent(1)),
+                            })?,
+                            funds: vec![
+                                Coin {
+                                    denom: config.range_tokens.floor_deposit_token.clone(),
+                                    amount: usdc_to_sell,
+                                },
+                            ],
+                        });
+                        //Add to msgs as SubMsg
+                        submsgs.push(SubMsg::new(swap_to_desired));
+                        //Post swap we parse thru intents again in a reply & send or compound the desired asset
+                    }
+                }
+                
+                //Swap CDT to the desired asset
+                if !cdt_to_sell.is_zero() {  
+                    /////Swap CDT to the desired asset///
+                    if let Some(routes) = purchase_intent.route {
+                        //Set the swap route
+                        let routes = routes.cdt_route;
+                        
+                        //Swap CDT using given route
+                        let swap_to_desired: CosmosMsg = MsgSwapExactAmountIn {
+                            sender: env.contract.address.to_string(),
+                            routes,
+                            token_in: Some(osmosis_std::types::cosmos::base::v1beta1::Coin {
+                                amount: cdt_to_sell.to_string(),
+                                denom: config.range_tokens.ceiling_deposit_token.clone(),
+                            }),
+                            token_out_min_amount: "1".to_string(), //We don't limit the min amount for misc. assets (i.e. max slippage at 100%)
+                            
+                        }.into();
+                        //Add to msgs as SubMsg
+                        submsgs.push(SubMsg::new(swap_to_desired));
+                        //Post swap we parse thru intents again in a reply & send or compound the desired asset
+
+
+                    } else {
+                        //Swap using default route
+                        let swap_to_desired: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+                            contract_addr: config.osmosis_proxy_contract_addr.to_string(),
+                            msg: to_json_binary(&OP_ExecuteMsg::ExecuteSwaps {
+                                token_out: purchase_intent.desired_asset.clone(),
+                                max_slippage: purchase_intent.slippage.unwrap_or_else(|| Decimal::percent(1)),
+                            })?,
+                            funds: vec![
+                                Coin {
+                                    denom: config.range_tokens.ceiling_deposit_token.clone(),
+                                    amount: cdt_to_sell,
+                                },
+                            ],
+                        });
+                        //Add to msgs as SubMsg
+                        submsgs.push(SubMsg::new(swap_to_desired));
+                        //Post swap we parse thru intents again in a reply & send or compound the desired asset
+                    }
+                } 
+            }
+            
+            
+            //Pop last submsg and add PARSE_PURCHASE_INTENTS_REPLY_ID on success
+            if submsgs.len() > 0 {
+                //Remove last msg from msgs
+                let last_submsg = match submsgs.pop(){
+                    Some(msg) => msg,
+                    None => return Err(StdError::GenericErr { msg: String::from("No messages to swap") })
+                };
+        
+                //Set the last msg of the list to be a submessage with a parse purchase intents reply
+                submsgs.push(SubMsg::reply_on_success(last_submsg.msg, PARSE_PURCHASE_INTENTS_REPLY_ID));
+            }
+
+            //Create response
+            let res = Response::new()
+                .add_submessages(submsgs)
+                .add_attribute("method", "handle_purchase_post_exit_reply")
+                .add_attribute("purchase_intents", format!("{:?}", intent_prop.intents.purchase_intents))
+                .add_attribute("new_cdt_balance", new_cdt_balance.to_string())
+                .add_attribute("new_usdc_balance", new_usdc_balance.to_string());
+
+            return Ok(res);
+
+        } //We only reply on success
+        Err(err) => return Err(StdError::GenericErr { msg: err }),
+    }
+}
+
+//Send or compound the desired asset post swap in line with the user's intent
+fn handle_parse_purchase_intents_reply(
+    deps: DepsMut,
+    env: Env,
+    msg: Reply,
+) -> StdResult<Response> {
+    match msg.result.into_result() {
+        Ok(_) => {
+            let mut submsgs = vec![];
+            let mut attrs = vec![];
+            //Load state
+            let config = CONFIG.load(deps.storage)?;
+
+            //Load Intents propagation
+            let intent_prop = INTENT_PROPAGATION.load(deps.storage)?;
+                        
+            //Parse thru intents & send or compound the desired asset
+            for intent in intent_prop.intents.purchase_intents {
+                //Get the balance of the desired asset
+                let desired_asset_balance = deps.querier.query_balance(env.contract.address.into(), intent.desired_asset.clone())?.amount;
+
+                //If the intent has a position_id compound
+                if let Some(position_id) = intent.position_id {
+                    //Add asset & amount to attrs for response
+                    attrs.push(attr("compounded_asset", Asset {
+                        asset_info: AssetInfo::NativeToken { denom: intent.desired_asset.clone() },
+                        amount: desired_asset_balance.clone(),
+                    }.to_string()));
+                    //Create position deposit message
+                    let position_deposit_msg: CosmosMsg = CosmosMsg::Wasm(
+                        WasmMsg::Execute {
+                            contract_addr: "osmo1gy5gpqqlth0jpm9ydxlmff6g5mpnfvrfxd3mfc8dhyt03waumtzqt8exxr".to_string(),
+                            msg: to_binary(&CDP_ExecuteMsg::Deposit {
+                                position_id: Some(position_id),
+                                position_owner: Some(intent_prop.intents.user.clone()),
+                            })?,
+                            funds: vec![
+                                Coin {
+                                    denom: intent.desired_asset.clone(),
+                                    amount: desired_asset_balance,
+                                }
+                            ],
+                        }
+                    );
+                    //Add to msgs
+                    submsgs.push(SubMsg::new(position_compound_msg));
+                } 
+                //Otherwise send the desired asset to the user
+                else {
+                    //Add asset & amount to attrs for response
+                    attrs.push(attr("purchased_and_sent_asset", Asset {
+                        asset_info: AssetInfo::NativeToken { denom: intent.desired_asset.clone() },
+                        amount: desired_asset_balance.clone(),
+                    }.to_string()));
+                    //Send the desired asset to the user
+                    let send_to_user: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
+                        to_address: intent_prop.intents.user.clone(),
+                        amount: vec![Coin {
+                            denom: intent.desired_asset.clone(),
+                            amount: desired_asset_balance,
+                        }],
+                    });
+                    //Add to msgs
+                    submsgs.push(SubMsg::new(send_to_user));
+                }
+            }
+            
+            //Create response
+            let res = Response::new()
+                .add_submessages(submsgs)
+                .add_attribute("method", "handle_parse_purchase_intents_reply")
+                .add_attribute("purchase_intents", format!("{:?}", intent_prop.intents.purchase_intents))
+                .add_attributes(attrs);
+
+        } //We only reply on success
+        Err(err) => return Err(StdError::GenericErr { msg: err }),
+    }
+}
+
+/// Swap any exited USDC to CDT & repay any new CDT to the intended position.
+/// This happens for the repay() fn which is called by the Positions contract during liquidations.
+fn handle_repay_and_swap_after_exit_reply(
+    deps: DepsMut,
+    env: Env,
+    msg: Reply,
+) -> StdResult<Response> {
+    match msg.result.into_result() {
+        Ok(_) => {
+            let mut submsgs = vec![];
+            //Load state
+            let config = CONFIG.load(deps.storage)?;
+
+            //Load Repay propagation
+            let repay_prop = CDP_REPAY_PROPAGATION.load(deps.storage)?;
+
+            //Calc newly added balances
+            let current_cdt_balance = deps.querier.query_balance(env.contract.address.into(), config.range_tokens.ceiling_deposit_token)?.amount;
+            let current_usdc_balance = deps.querier.query_balance(env.contract.address.into(), config.range_tokens.floor_deposit_token)?.amount;
+            let new_cdt_balance = current_cdt_balance - repay_prop.prev_cdt_balance;
+            let new_usdc_balance = current_usdc_balance - repay_prop.prev_usdc_balance;
+
+            //Update current balances
+            CDP_REPAY_PROPAGATION.save(deps.storage, &CDPRepayProp {
+                user_info: repay_prop.user_info,
+                prev_cdt_balance: current_cdt_balance,
+                prev_usdc_balance: current_usdc_balance,
+            })?;
+
+            //If new USDC balance is not 0, swap to CDT
+            if !new_usdc_balance.is_zero() {
+                //Swap USDC to CDT
+                let swap_to_ceiling: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+                    contract_addr: config.osmosis_proxy_contract_addr.to_string(),
+                    msg: to_json_binary(&OP_ExecuteMsg::ExecuteSwaps {
+                        token_out: config.range_tokens.clone().ceiling_deposit_token,
+                        max_slippage: Decimal::percent(90), //We can't have this error out for liquidations
+                    })?,
+                    funds: vec![
+                        Coin {
+                            denom: config.range_tokens.floor_deposit_token.clone(),
+                            amount: new_usdc_balance,
+                        },
+                    ],
+                });
+                //Add to msgs as SubMsg
+                let swap_to_ceiling_submsg = SubMsg::reply_on_success(swap_to_ceiling, SWAP_FOR_CDP_REPAY_REPLY_ID);
+                submsgs.push(swap_to_ceiling_submsg);
+            }
+            
+            if !new_cdt_balance.is_zero() {                
+                //Create position repay message
+                let position_repay_msg: CosmosMsg = CosmosMsg::Wasm(
+                    WasmMsg::Execute {
+                        contract_addr: "osmo1gy5gpqqlth0jpm9ydxlmff6g5mpnfvrfxd3mfc8dhyt03waumtzqt8exxr".to_string(),
+                        msg: to_binary(&CDP_ExecuteMsg::Repay {
+                            position_id: repay_prop.user_info.position_id,
+                            position_owner: Some(repay_prop.user_info.position_owner.clone()),
+                            send_excess_to: Some(repay_prop.user_info.position_owner.clone()),
+                        })?,
+                        funds: vec![
+                            Coin {
+                                denom: config.range_tokens.ceiling_deposit_token.clone(),
+                                amount: new_cdt_balance,
+                            }
+                        ],
+                    }
+                );
+                //Add to msgs
+                submsgs.push(SubMsg::new(position_repay_msg));
+            }       
+
+
+            //Create response
+            let res = Response::new()
+                .add_submessages(submsgs)
+                .add_attribute("method", "handle_repay_and_swap_after_exit_reply")
+                .add_attribute("position_id", repay_prop.user_info.position_id)
+                .add_attribute("repay_amount", new_cdt_balance.to_string())
+                .add_attribute("swap_amount", new_usdc_balance.to_string());
+
+
+            return Ok(res);
+
+        } //We only reply on success
+        Err(err) => return Err(StdError::GenericErr { msg: err }),
+    }
+}
+
+/// Repay any exited USDC that was swapped to CDT to the intended position for CDP liquidations.
+fn handle_repay_after_swap_reply(
+    deps: DepsMut,
+    env: Env,
+    msg: Reply,
+) -> StdResult<Response> {
+    match msg.result.into_result() {
+        Ok(_) => {
+            let mut submsgs = vec![];
+            //Load state
+            let config = CONFIG.load(deps.storage)?;
+
+            //Load Repay propagation
+            let repay_prop = CDP_REPAY_PROPAGATION.load(deps.storage)?;
+
+            //Calc newly added balances
+            let current_cdt_balance = deps.querier.query_balance(env.contract.address.into(), config.range_tokens.ceiling_deposit_token)?.amount;
+            let new_cdt_balance = current_cdt_balance - repay_prop.prev_cdt_balance;
+            
+            if !new_cdt_balance.is_zero() {                
+                //Create position repay message
+                let position_repay_msg: CosmosMsg = CosmosMsg::Wasm(
+                    WasmMsg::Execute {
+                        contract_addr: "osmo1gy5gpqqlth0jpm9ydxlmff6g5mpnfvrfxd3mfc8dhyt03waumtzqt8exxr".to_string(),
+                        msg: to_binary(&CDP_ExecuteMsg::Repay {
+                            position_id: repay_prop.user_info.position_id,
+                            position_owner: Some(repay_prop.user_info.position_owner.clone()),
+                            send_excess_to: Some(repay_prop.user_info.position_owner.clone()),
+                            
+                        })?,
+                        funds: vec![
+                            Coin {
+                                denom: config.range_tokens.ceiling_deposit_token.clone(),
+                                amount: new_cdt_balance,
+                            }
+                        ],
+                    }
+                );
+                //Add to msgs
+                submsgs.push(SubMsg::new(position_repay_msg));
+            }       
+
+
+            //Create response
+            let res = Response::new()
+                .add_submessages(submsgs)
+                .add_attribute("method", "handle_repay_after_swap_reply")
+                .add_attribute("position_id", repay_prop.user_info.position_id)
+                .add_attribute("repay_amount", new_cdt_balance.to_string());
+
+            return Ok(res);
+
+        } //We only reply on success
+        Err(err) => return Err(StdError::GenericErr { msg: err }),
+    }
+}
+
 
 /// Get the tokens swapped to the floor & add them to the floor position
 fn handle_swap_add_to_floor(

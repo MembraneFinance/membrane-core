@@ -103,6 +103,8 @@ pub struct Config {
 
 #[cw_serde]
 pub struct ClaimCheck {
+    /// Block time of the last check
+    pub check_time: u64,
     /// User address
     pub user: Addr,
     ///Basket's last pending_revenue value

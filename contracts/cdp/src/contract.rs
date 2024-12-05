@@ -21,17 +21,13 @@ use crate::error::ContractError;
 use crate::rates::{accrue, external_accrue_call};
 use crate::risk_engine::assert_basket_assets;
 use crate::positions::{
-    deposit,
-    edit_basket, increase_debt,
-    liq_repay, repay, redeem_for_collateral, edit_redemption_info,
-    withdraw, BAD_DEBT_REPLY_ID, WITHDRAW_REPLY_ID,
-    LIQ_QUEUE_REPLY_ID, REVENUE_REPLY_ID, create_basket,
+    create_basket, deposit, edit_basket, edit_redemption_info, increase_debt, liq_repay, redeem_for_collateral, repay, withdraw, BAD_DEBT_REPLY_ID, CLOSE_POSITION_REPLY_ID, LIQ_QUEUE_REPLY_ID, REVENUE_REPLY_ID, WITHDRAW_REPLY_ID
 };
 use crate::query::{
     query_basket_credit_interest, query_basket_positions, query_basket_redeemability, query_collateral_rates, simulate_LTV_mint
 };
 use crate::liquidations::liquidate;
-use crate::reply::{handle_liq_queue_reply, handle_withdraw_reply, handle_revenue_reply};
+use crate::reply::{handle_close_position_reply, handle_liq_queue_reply, handle_revenue_reply, handle_withdraw_reply};
 use crate::state::{ get_target_position, update_position, ContractVersion, BASKET, CONFIG, CONTRACT, LIQUIDATION, OWNERSHIP_TRANSFER, POSITIONS, REDEMPTION_OPT_IN, VOLATILITY };
 
 // version info for migration info
@@ -529,6 +525,7 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response> {
         LIQ_QUEUE_REPLY_ID => handle_liq_queue_reply(deps, msg, env),
         WITHDRAW_REPLY_ID => handle_withdraw_reply(deps, env, msg),
         REVENUE_REPLY_ID => handle_revenue_reply(deps, env, msg),
+        CLOSE_POSITION_REPLY_ID => handle_close_position_reply(deps, env, msg),
         BAD_DEBT_REPLY_ID => Ok(Response::new()),
         id => Err(StdError::generic_err(format!("invalid reply id: {}", id))),
     }

@@ -540,12 +540,11 @@ pub fn accrue(
             }
         }
     };
-
     //Don't accrue repayment interest if price is within the margin of error
     if price_difference > basket.clone().cpc_margin_of_error {
         //Multiply price_difference by the cpc_multiplier
         credit_price_rate = decimal_multiplication(price_difference, config.cpc_multiplier)?;
-
+        
         if !skip_credit_price_accrual {
             //Calculate rate of change
             let mut applied_rate = credit_price_rate.checked_mul(Decimal::from_ratio(

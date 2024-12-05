@@ -38,6 +38,7 @@ pub const LIQ_QUEUE_REPLY_ID: u64 = 1u64;
 // pub const USER_SP_REPAY_REPLY_ID: u64 = 3u64;
 pub const WITHDRAW_REPLY_ID: u64 = 4u64;
 pub const REVENUE_REPLY_ID: u64 = 5u64;
+pub const CLOSE_POSITION_REPLY_ID: u64 = 6u64;
 pub const BAD_DEBT_REPLY_ID: u64 = 999999u64;
 
 
@@ -1092,6 +1093,119 @@ pub fn increase_debt(
         .add_attribute("increased_by", amount.to_string());
 
     Ok(response)
+}
+
+/// Sell position collateral to fully repay debts.
+/// Max spread is used to ensure the full debt is repaid in lieu of slippage.
+pub fn close_position(
+    deps: DepsMut, 
+    env: Env,
+    info: MessageInfo,
+    position_id: Uint128,
+    max_spread: Decimal,
+    mut send_to: Option<String>,
+) -> Result<Response, ContractError>{
+    //Load Config
+    let config: Config = CONFIG.load(deps.storage)?;
+
+    //Load Basket
+    let basket: Basket = BASKET.load(deps.storage)?;
+
+    //Load target_position, restrict to owner
+    let (_i, target_position) = get_target_position(deps.storage, info.clone().sender, position_id)?;
+
+    //Calc collateral to sell
+    //credit_amount * credit_price * (1 + max_spread)
+    let total_collateral_value_to_sell = {
+            decimal_multiplication(
+                basket.clone().credit_price.get_value(target_position.credit_amount)?, 
+                (max_spread + Decimal::one())
+            )?
+    };
+
+    //Max_spread is added to the collateral amount to ensure enough credit is purchased
+    //Excess debt token gets sent back to the position_owner during repayment
+
+    //Get cAsset_ratios for the target_position
+    let (cAsset_ratios, cAsset_prices) = get_cAsset_ratios(deps.storage, env.clone(), deps.querier, target_position.clone().collateral_assets, config.clone(), Some(basket.clone()))?;
+
+    let mut router_messages = vec![];
+    let mut withdrawn_assets = vec![];
+
+    //Calc collateral_amount_to_sell per asset & create router msg
+    for (i, _collateral_ratio) in cAsset_ratios.clone().into_iter().enumerate(){
+
+        //Calc collateral_amount_to_sell
+        let mut collateral_amount_to_sell = {
+
+            let collateral_value_to_sell = decimal_multiplication(total_collateral_value_to_sell, cAsset_ratios[i])?;
+
+            let post_normalized_amount: Uint128 = match cAsset_prices[i].get_amount(collateral_value_to_sell){
+                Ok(amount) => amount,
+                Err(_e) => return Err(ContractError::CustomError { val: String::from("Collateral value to sell is too high to calculate an amount for due to the max spread creating an out of bounds error") })
+            };
+
+            post_normalized_amount
+        };
+
+        //Collateral to sell can't be more than the position owns
+        if collateral_amount_to_sell > target_position.collateral_assets.clone()[i].asset.amount {
+            collateral_amount_to_sell = target_position.collateral_assets.clone()[i].asset.amount;
+        }
+
+        //Set collateral asset
+        let collateral_asset = target_position.clone().collateral_assets[i].clone().asset;
+
+        //Add collateral_amount to list for propagation
+        withdrawn_assets.push(Asset{
+            amount: collateral_amount_to_sell,
+            ..collateral_asset.clone()
+        });
+
+        //Create router subMsg to sell, repay in reply on success
+        let router_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: config.clone().osmosis_proxy.unwrap().to_string(),
+            msg: to_json_binary(&OsmoExecuteMsg::ExecuteSwaps { 
+                token_out: basket.clone().credit_asset.info.to_string(),
+                max_slippage: max_spread,
+            })?,
+            funds: vec![
+                Coin {
+                    denom: collateral_asset.clone().info.to_string(),
+                    amount: collateral_amount_to_sell,
+                }
+            ],
+        });
+        router_messages.push(router_msg);
+    }
+
+    //Set send_to for WithdrawMsg in Reply
+    if send_to.is_none() {
+        send_to = Some(info.sender.to_string());
+    }
+
+    //Save CLOSE_POSITION_PROPAGATION
+    CLOSE_POSITION.save(deps.storage, &ClosePositionPropagation {
+        withdrawn_assets,
+        position_info: UserInfo { 
+            position_id, 
+            position_owner: info.sender.to_string(),
+        },
+        send_to,
+    })?;
+
+    //The last router message is updated to a CLOSE_POSITION_REPLY to close the position after all sales and repayments are done.
+    let sub_msg = SubMsg::reply_on_success(router_messages.pop().unwrap(), CLOSE_POSITION_REPLY_ID);    
+    //Transform Router Msgs into SubMsgs so they run after LP Withdrawals
+    let router_messages = router_messages.into_iter().map(|msg| SubMsg::new(msg)).collect::<Vec<SubMsg>>();
+
+    Ok(Response::new()
+        .add_submessages(router_messages)
+        .add_submessage(sub_msg)
+        .add_attributes(vec![
+        attr("position_id", position_id),
+        attr("user", info.sender),
+    ])) //If the sale incurred slippage and couldn't repay through the debt minimum, the subsequent withdraw msg will error and revert state 
 }
 
 /// Asserts valid state after increase_debt()

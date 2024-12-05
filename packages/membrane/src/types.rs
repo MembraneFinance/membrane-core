@@ -418,6 +418,45 @@ pub struct cAsset {
     pub hike_rates: Option<bool>,
 }
 
+//intent state
+#[cw_serde]
+pub struct AssetPrice {
+    pub asset: String,
+    pub price: Decimal,
+}
+#[cw_serde]
+pub struct IntentInitiations {
+    pub initiation_ltv: Decimal,
+    pub initiation_cost: Decimal,
+    pub initiation_price: Vec<AssetPrice>
+}
+
+#[cw_serde]
+pub struct LoopIntent {
+    pub loop_to_ltv: Decimal,
+    pub initiations: IntentInitiations,
+}
+
+#[cw_serde]
+pub struct CloseIntent { //Unloop/Close
+    pub percent_to_close: Decimal,
+    pub initiations: IntentInitiations,
+}
+
+#[cw_serde]
+pub struct EnterLPIntent { //Enter RB LP Vault
+    pub mint_to_ltv: Decimal,
+    pub initiations: IntentInitiations,
+}
+
+#[cw_serde]
+pub struct CDPUserIntents { 
+    pub user: String,
+    pub loop_intent: Option<LoopIntent>,
+    pub close_intent: Option<CloseIntent>,
+    pub enter_lp_intent: Option<EnterLPIntent>,
+}
+
 /// Osmosis PoolInfo
 #[cw_serde]
 pub struct PoolInfo {
@@ -1077,4 +1116,49 @@ pub struct RangeTicks {
 pub struct RangePositions {
     pub ceiling: u64,
     pub floor: u64,
+}
+#[cw_serde]
+pub struct IntentRoutes {
+    pub cdt_route: Vec<SwapAmountInRoute>,
+    pub usdc_route: Vec<SwapAmountInRoute>,
+}
+
+#[cw_serde]
+pub struct PurchaseIntent {
+    pub desired_asset: String,
+    /// We don't limit the min amount for misc. asset routes (i.e. max slippage at 100%)
+    pub route: Option<IntentRoutes>, //We don't use Osmosis Proxy for this
+    /// Yield ditribution percent
+    pub yield_percent: Decimal,
+    /// If some we deposit into the position    
+    pub position_id: Option<u64>,
+    /// Slippage tolerance
+    pub slippage: Option<Decimal>,
+}
+
+// #[cw_serde]
+// pub struct RepayIntent { //Repay using VT tokens
+//     pub position_id: u64,
+//     pub percent_of_vt_to_repay: Decimal,
+//     pub initiation_ltv: Decimal,
+//     ///flat fee of deposit token (CDT)
+//     pub fee: Uint128, 
+// }
+
+#[cw_serde]
+pub struct RangeBoundUserIntents {
+    pub user: String,
+    pub last_conversion_rate: Uint128,
+    pub purchase_intents: Vec<PurchaseIntent>,
+}
+
+
+#[cw_serde]
+pub struct UserIntentState {
+    pub vault_tokens: Uint128,
+    pub intents: RangeBoundUserIntents,
+    /// Unused until withdrawal period is added
+    pub unstake_time: u64,
+    ///Fee as a % of the yield
+    pub fee_to_caller: Decimal, 
 }

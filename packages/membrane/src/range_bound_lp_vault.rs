@@ -1,7 +1,7 @@
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Decimal, Uint128};
-use crate::types::{RangeBounds, RangeTokens, RangePositions};
+use crate::types::{RangeBounds, RangeTokens, RangePositions, RangeBoundUserIntents,UserIntentState};
 
 
 #[cw_serde]
@@ -14,15 +14,21 @@ pub struct InstantiateMsg {
 }
 
 #[cw_serde]
+pub struct LeaveTokens {
+    pub percent_to_leave: Decimal,
+    pub intent_for_tokens: RangeBoundUserIntents,
+}
+#[cw_serde]
 pub enum ExecuteMsg {
-    /// Enter the vault 50:50, 50% CDT - 50% USDC.
-    /// Since the contract would swap to balance anyway..
-    /// ...accepting 50:50 allows the App to swap into deposits or accept both assets...
-    /// ...instead of always swapping into CDT and then the vault swapping back to balance.
-    EnterVault { },
+    /// Enter the vault 100% CDT
+    EnterVault {
+        leave_vault_tokens_in_vault: Option<LeaveTokens>,
+    },
     /// Exit vault in the current ratio of assets owned (LP + balances)
     /// The App can swap into a single token and give value options based on swap rate.
-    ExitVault { },
+    ExitVault {
+        send_to: Option<String>,
+    },
     /// Deposits CDT revenue into the contract. 
     /// We use a msg enum bc the CDP needs it.
     DepositFee { },
@@ -34,6 +40,14 @@ pub enum ExecuteMsg {
     /// - If price is in the ceiling, swap and deposit into floor
     /// - If price is in the floor, swap and deposit into ceiling
     ManageVault { rebalance_sale_max: Option<Decimal> },
+    /// Set intents for a user. They must send vault tokens or have a non-zero balance in state.
+    /// NOTE: We don't use the asset price initiation.
+    SetUserIntents { 
+        intents: RangeBoundUserIntents,
+        reduce_vault_tokens: Option<Uint128>,
+    },
+    /// Fulfill intents for a user. Send fees to the caller.
+    FulFillUserIntents { users: Vec<String> },
     UpdateConfig {
         owner: Option<String>,
         osmosis_proxy_contract_addr: Option<String>,
@@ -54,6 +68,17 @@ pub enum QueryMsg {
     DepositTokenConversion { deposit_token_value: Decimal },
     ClaimTracker {},
     TotalTVL {},
+    GetUserIntent { 
+        start_after: Option<String>,
+        limit: Option<u32>,
+        users: Vec<String> 
+    },
+}
+
+#[cw_serde]
+pub struct UserIntentResponse {
+    pub user: String,
+    pub intent: UserIntentState
 }
 
 #[cw_serde]

@@ -221,7 +221,8 @@ pub struct Config {
     /// Stability Pool contract address
     pub stability_pool: Option<Addr>,
     /// Apollo DEX router contract address.
-    /// Note: Will need to change msg types if the router provider changes
+    /// Note: Will need to change msg types if the router provider changes.
+    /// Unused. The contract uses the Osmosis Proxy for swaps.
     pub dex_router: Option<Addr>,
     /// Staking contract address
     pub staking_contract: Option<Addr>,

@@ -15,10 +15,11 @@ use membrane::liq_queue::{QueryMsg as LIQ_QueryMsg, ClaimsResponse as LQ_ClaimsR
 use membrane::governance::{QueryMsg as GOV_QueryMsg, Proposal};
 use membrane::oracle::QueryMsg as Oracle_QueryMsg;
 use membrane::osmosis_proxy::ExecuteMsg as OP_ExecuteMsg;
-use membrane::types::{AssetInfo, Basket, UserInfo};
+use membrane::stability_pool_vault::QueryMsg as Vault_QueryMsg;
+use membrane::types::{Asset, AssetInfo, Basket, UserInfo};
 
 use crate::error::ContractError;
-use crate::state::{LiquidationPropagation, CLAIM_CHECK, CONFIG, LIQ_PROPAGATION, OWNERSHIP_TRANSFER, USER_STATS};
+use crate::state::{LiquidationPropagation, VaultConversionRate, VaultInfo, CLAIM_CHECK, CONFIG, LIQ_PROPAGATION, OWNERSHIP_TRANSFER, USER_STATS, VAULT_INFO};
 
 // Contract name and version used for migration.
 const CONTRACT_NAME: &str = "points_system";
@@ -105,7 +106,7 @@ pub fn execute(
 //4) Governance Votes: Save unvoted proposals to check for votes in GivePoints
 fn check_claims(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,    
     cdp_repayment: Option<UserInfo>,
     sp_claims: bool,
@@ -203,6 +204,7 @@ fn check_claims(
             lq_pending_claims: pending_lq_claims.clone(),
             sp_pending_claims: pending_sp_claims.clone().claims,
             vote_pending: unvoted_proposals.clone(),
+            check_time: env.block.time.seconds(),
         }
     )?;  
 
@@ -242,6 +244,11 @@ fn give_points(
     //Assert the caller is the same as the claim check user
     if info.clone().sender != claim_check.user {
         return Err(ContractError::Unauthorized {});
+    }
+
+    //Give points needs to be in the same block as the claim check
+    if env.block.time.seconds() != claim_check.check_time {
+        return Err(ContractError::Std(StdError::generic_err("Claim check is outdated")));
     }
 
     //Get CDP Basket    
@@ -400,6 +407,53 @@ fn give_points(
 
 
     Ok(Response::new().add_attributes(attrs))
+}
+
+fn save_vault_conversion_rates(
+    deps: DepsMut,
+    info: MessageInfo,
+) -> Result<Response, ContractError>{
+    //Load vault info state for all vaults
+    let vault_infos: Vec<VaultInfo> = VAULT_INFO.load(deps.storage)?;
+    //Query the user's balances
+    let user_balances = deps.querier.query_all_balances(&info.sender)?;
+    //Search for any vault tokens
+    let vault_tokens = user_balances.into_iter().filter(|x| vault_infos.iter().any(|vault| vault.vault_token_denom == x.denom )).collect::<Vec<Coin>>();
+
+    //Get conversation rates for each found vault token
+    let conversion_rates = vault_tokens.into_iter().map(|token| {
+        //find token in vault infos
+        let vault_info = vault_infos.iter().find(|x| x.vault_token_denom == token.denom).unwrap();
+        //Query for conversion rate
+        let conversion_rate: Uint128 = deps.querier.query::<Uint128>(&QueryRequest::Wasm(WasmQuery::Smart { 
+            contract_addr: vault_info.vault_address.clone(), 
+            msg: to_json_binary(&Vault_QueryMsg::VaultTokenUnderlying {  
+                vault_token_amount: vault_info.single_vault_token
+            })?
+        }))?;
+        //Return conversion rate object
+        return Ok(VaultConversionRate {
+            vault_address: vault_info.vault_address.clone(),
+            last_conversion_rate: Uint128::zero(),
+            total_vault_tokens: Asset {
+                amount: token.amount,
+                info: AssetInfo::NativeToken { denom: token.denom },
+            },
+        });
+    }).collect::<StdResult<Vec<VaultConversionRate>>>()?;
+
+    //Load user's existing conversion rates
+
+    //Give points for any existing conversion rates.
+    //We use the minimum of the user's vault tokens to calculate points. If they got more or exited some, it won't help their points.
+
+    //Add vault conversion rates to the user.
+    //Replace any existing, add otherwise.
+
+
+
+
+    Ok(Response::new())
 }
 
 /// Liquidate a position
