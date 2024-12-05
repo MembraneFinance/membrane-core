@@ -1075,7 +1075,7 @@ fn manage_vault(
 /// Set intents for a user. They must send vault tokens or have a non-zero balance in state.
 /// NOTE: Since the CDP will repay with these assets for you during liquidation, we don't have autoRepay intents.
 /// NOTE: You either purchase or compound an asset, can't split it.
-fn set_intents (
+fn  (
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
@@ -1084,6 +1084,7 @@ fn set_intents (
 ) -> Result<Response, TokenFactoryError> {
     //Load config
     let config = CONFIG.load(deps.storage)?;
+    let mut msgs = vec![];
     //Load user intents state
     let mut user_intent_state = match USER_INTENT_STATE.load(deps.storage, info.clone().sender.to_string()){
         Ok(mut state) => {
@@ -1160,6 +1161,18 @@ fn set_intents (
                 return Err(TokenFactoryError::CustomError { val: String::from("Cannot reduce vault tokens below 0") });
             }
             user_intent_state.vault_tokens -= reduce_amount;
+
+            //Send the reduced vault tokens to the user as a BankMsg
+            let send_vault_tokens_msg: CosmosMsg = BankMsg::Send {
+                to_address: info.sender.clone().to_string(),
+                amount: vec![Coin {
+                    denom: config.vault_token.clone(),
+                    amount: reduce_amount,
+                }],
+            }.into();
+            //Add to msgs
+            msgs.push(send_vault_tokens_msg);
+
         }
     }
 
