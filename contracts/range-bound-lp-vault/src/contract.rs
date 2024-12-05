@@ -1176,10 +1176,14 @@ fn  (
         }
     }
 
-    //
 
     //Save user intents state
-    USER_INTENT_STATE.save(deps.storage, info.sender.to_string(), &user_intent_state)?;
+    USER_INTENT_STATE.save(deps.storage, info.sender.clone().to_string(), &user_intent_state)?;
+
+    //If the user removed all VTs, delete their state
+    if user_intent_state.vault_tokens.is_zero() {
+        USER_INTENT_STATE.remove(deps.storage, info.sender.to_string());
+    }
 
     //Create response
     Ok(Response::new()
