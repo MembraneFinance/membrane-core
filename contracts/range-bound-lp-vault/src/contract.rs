@@ -1075,7 +1075,7 @@ fn manage_vault(
 /// Set intents for a user. They must send vault tokens or have a non-zero balance in state.
 /// NOTE: Since the CDP will repay with these assets for you during liquidation, we don't have autoRepay intents.
 /// NOTE: You either purchase or compound an asset, can't split it.
-fn  (
+fn set_intents(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
