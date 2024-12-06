@@ -525,6 +525,8 @@ fn enter_vault(
             } else {
                 info.sender.to_string()
             };
+            //Set user
+            intent_info.intent_for_tokens.user = user.clone();
             //Add the vault tokens to the user's state if they already have it.
             //Create or update the user's intent state
             USER_INTENT_STATE.update(deps.storage, user, |state| -> Result<UserIntentState, TokenFactoryError> {
