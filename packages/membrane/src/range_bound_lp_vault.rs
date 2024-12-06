@@ -1,7 +1,7 @@
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Decimal, Uint128};
-use crate::types::{RangeBounds, RangeTokens, RangePositions, RangeBoundUserIntents,UserIntentState};
+use crate::types::{RangeBounds, RangeTokens, RangePositions, RangeBoundUserIntents, UserIntentState, UserInfo};
 
 
 #[cw_serde]
@@ -48,6 +48,12 @@ pub enum ExecuteMsg {
     },
     /// Fulfill intents for a user. Send fees to the caller.
     FulFillUserIntents { users: Vec<String> },
+    /// Let CDP contract use VTs in user intents to repay debt.
+    RepayUserDebt { 
+        user_info: UserInfo,
+        repayment: Uint128, 
+    },
+    /// Update the contract config
     UpdateConfig {
         owner: Option<String>,
         osmosis_proxy_contract_addr: Option<String>,

@@ -22,11 +22,11 @@ use membrane::stability_pool_vault::{
     calculate_base_tokens, calculate_vault_tokens
 };
 use membrane::osmosis_proxy::ExecuteMsg as OP_ExecuteMsg;
-use membrane::cdp::{BasketPositionsResponse, ExecuteMsg as CDP_ExecuteMsg, QueryMsg as CDP_QueryMsg};
+use membrane::cdp::ExecuteMsg as CDP_ExecuteMsg;
 use membrane::oracle::QueryMsg as Oracle_QueryMsg;
 use membrane::types::{Asset, AssetInfo, ClaimTracker, RangeBoundUserIntents, RangePositions, UserInfo, VTClaimCheckpoint, UserIntentState};
 use osmosis_std::types::osmosis::tokenfactory::v1beta1::{self as TokenFactory};
-use osmosis_std::types::osmosis::poolmanager::v1beta1::{MsgSwapExactAmountIn, SwapAmountInRoute};
+use osmosis_std::types::osmosis::poolmanager::v1beta1::MsgSwapExactAmountIn;
 use osmosis_std::types::osmosis::concentratedliquidity::v1beta1::{self as CL, FullPositionBreakdown};
 
 // version info for migration info
@@ -149,6 +149,7 @@ pub fn execute(
         ExecuteMsg::ManageVault { rebalance_sale_max } => manage_vault(deps, env, info, rebalance_sale_max),
         ExecuteMsg::SetUserIntents { intents, reduce_vault_tokens } => set_intents(deps, env, info, intents, reduce_vault_tokens),
         ExecuteMsg::FulFillUserIntents { users } => fulfill_intents(deps, env, info, users),
+        ExecuteMsg::RepayUserDebt { user_info, repayment } => repay_user_debt(deps, env, info, user_info, repayment),
         ExecuteMsg::CrankRealizedAPR { } => crank_realized_apr(deps, env, info),
         ExecuteMsg::RateAssurance { } => rate_assurance(deps, env, info),
         ExecuteMsg::DepositFee { } => deposit_fee(deps, env, info),
@@ -437,8 +438,8 @@ fn enter_vault(
     //Get total_deposit_tokens & prices
     let (
         total_deposit_tokens,
-        ceiling_price, 
-        floor_price,
+        _, 
+        _,
         _,
         _,
         _,
@@ -1330,12 +1331,12 @@ fn fulfill_intents(
 }
 
 /// Repay for a user in the Positions contract
-fn repay(
+fn repay_user_debt(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
     user_info: UserInfo,
-    mut repayment: Uint128, //This is the amount of the deposit asset to repay
+    repayment: Uint128, //This is the amount of the deposit asset to repay
 ) -> Result<Response, TokenFactoryError> {
     //Assert sender is the Positions contract
     if info.sender.to_string() != String::from("osmo1gy5gpqqlth0jpm9ydxlmff6g5mpnfvrfxd3mfc8dhyt03waumtzqt8exxr") {
@@ -1536,7 +1537,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 }
 fn query_user_intent_state(
     deps: Deps,
-    env: Env,
+    _env: Env,
     start_after: Option<String>,
     limit: Option<u32>,
     // Users
@@ -1650,6 +1651,8 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response> {
         CL_POSITION_CREATION_REPLY_ID => handle_cl_position_creation_reply(deps, env, msg),
         SWAP_AFTER_EXIT_FOR_CDP_REPAY_REPLY_ID => handle_repay_and_swap_after_exit_reply(deps, env, msg),
         SWAP_FOR_CDP_REPAY_REPLY_ID => handle_repay_after_swap_reply(deps, env, msg),
+        PURCHASE_POST_EXIT_REPLY_ID => handle_purchase_post_exit_reply(deps, env, msg),
+        PARSE_PURCHASE_INTENTS_REPLY_ID => handle_parse_purchase_intents_reply(deps, env, msg),
         MANAGE_ERROR_DENIAL_REPLY_ID => Ok(Response::new().add_attribute("method", "handle_error_denial")),
         id => Err(StdError::generic_err(format!("invalid reply id: {}", id))),
     }
@@ -1834,7 +1837,7 @@ fn handle_parse_purchase_intents_reply(
             let mut submsgs = vec![];
             let mut attrs = vec![];
             //Load state
-            let config = CONFIG.load(deps.storage)?;
+            // let config = CONFIG.load(deps.storage)?;
 
             //Load Intents propagation
             let intent_prop = INTENT_PROPAGATION.load(deps.storage)?;
@@ -2380,6 +2383,6 @@ fn handle_cl_position_creation_reply(
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, TokenFactoryError> {
     Ok(Response::default())
 }
