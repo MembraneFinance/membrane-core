@@ -576,7 +576,8 @@ fn enter_vault(
         .add_attribute("method", "enter_vault")
         .add_attribute("deposit_amount", normalized_deposit_amount)
         .add_attribute("vault_tokens_to_distribute", vault_tokens_to_distribute)
-        .add_messages(msgs);
+        .add_messages(msgs)
+        .add_submessage(manage_submsg);
 
     Ok(res)
 }
