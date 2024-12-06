@@ -1110,8 +1110,8 @@ fn set_intents(
                 return Err(TokenFactoryError::CustomError { val: String::from("Yield distribution cannot exceed 100%") });
             }
             //Make sure intents aren't empty
-            if state.intents.purchase_intents.len() == 0 {
-                return Err(TokenFactoryError::CustomError { val: String::from("Intents cannot be empty") });
+            if state.intents.purchase_intents.len() == 0 && reduce_vault_tokens.is_none() {
+                return Err(TokenFactoryError::CustomError { val: String::from("Intents cannot be empty unless you are removing vault tokens from the intent.") });
             }
 
             //Return updated
