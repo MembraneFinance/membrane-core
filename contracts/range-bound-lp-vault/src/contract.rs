@@ -1198,6 +1198,7 @@ fn set_intents(
 
     //Create response
     Ok(Response::new()
+        .add_messages(msgs)
         .add_attribute("method", "set_intents")
         .add_attribute("user", info.sender)
         .add_attribute("vault_tokens", user_intent_state.vault_tokens)
