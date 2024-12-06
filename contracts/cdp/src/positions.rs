@@ -1102,6 +1102,7 @@ pub fn close_position(
     env: Env,
     info: MessageInfo,
     position_id: Uint128,
+    close_percentage: Option<Decimal>,
     max_spread: Decimal,
     mut send_to: Option<String>,
 ) -> Result<Response, ContractError>{
@@ -1111,14 +1112,23 @@ pub fn close_position(
     //Load Basket
     let basket: Basket = BASKET.load(deps.storage)?;
 
+    //Set close_percentage
+    let close_percentage = match close_percentage {
+        Some(close_percentage) => close_percentage,
+        None => Decimal::one(),
+    };
+
     //Load target_position, restrict to owner
     let (_i, target_position) = get_target_position(deps.storage, info.clone().sender, position_id)?;
+
+    //Set close_amount
+    let close_amount = target_position.credit_amount * close_percentage;
 
     //Calc collateral to sell
     //credit_amount * credit_price * (1 + max_spread)
     let total_collateral_value_to_sell = {
             decimal_multiplication(
-                basket.clone().credit_price.get_value(target_position.credit_amount)?, 
+                basket.clone().credit_price.get_value(close_amount)?, 
                 (max_spread + Decimal::one())
             )?
     };
