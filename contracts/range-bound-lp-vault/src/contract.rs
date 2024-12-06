@@ -1133,6 +1133,8 @@ fn set_intents(
             )?;
             //Set conversion rate
             intents.last_conversion_rate = btokens_per_one;
+            //Set user
+            intents.user = info.sender.clone().to_string();
             
             //Make sure the yield distribution isn't over 100%
             if intents.purchase_intents.clone().into_iter().map(|intent| intent.yield_percent).sum::<Decimal>() > Decimal::one() {
