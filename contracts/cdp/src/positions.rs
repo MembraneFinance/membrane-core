@@ -634,6 +634,10 @@ pub fn repay(
         if let Some(liq_queue) = basket.clone().liq_queue {
             if info.sender == liq_queue { let_pass = true; }
         }
+        //Range Bound Vault
+        if info.sender.to_string() == String::from("osmo17rvvd6jc9javy3ytr0cjcypxs20ru22kkhrpwx7j3ym02znuz0vqa37ffx") { let_pass = true; }
+        //Contract itself
+        if info.sender == env.contract.address { let_pass = true; }
         if !let_pass {
             return Err(ContractError::BelowMinimumDebt { minimum: config.debt_minimum, debt: basket.clone().credit_price.get_value(target_position.credit_amount)?.to_uint_floor() });
         }
