@@ -492,6 +492,16 @@ fn enter_vault(
         )?.to_uint_floor();
         //If the user wants to leave some vault tokens in the vault
         if !vault_tokens_to_leave.is_zero() {
+            
+            //Calc the rate of vault tokens to deposit tokens
+            let btokens_per_one = calculate_base_tokens(
+                Uint128::new(1_000_000_000_000), 
+                total_deposit_tokens, 
+                total_vault_tokens
+            )?;
+            //Set conversion rate
+            intent_info.intent_for_tokens.last_conversion_rate = btokens_per_one;
+
             //Calc the amount of vault tokens to send to the user
             vault_tokens_to_send = vault_tokens_to_distribute - vault_tokens_to_leave;
             //Mint vault tokens to the contract
@@ -1158,9 +1168,9 @@ fn set_intents(
 
         //Reduce the user's vault tokens if requested
         if let Some(reduce_amount) = reduce_vault_tokens {
-            if reduce_amount > user_intent_state.vault_tokens {
-                return Err(TokenFactoryError::CustomError { val: String::from("Cannot reduce vault tokens below 0") });
-            }
+            //Set reduce amount max
+            let reduce_amount = min(reduce_amount, user_intent_state.vault_tokens);
+            //Subtract the reduce amount from the user's vault tokens
             user_intent_state.vault_tokens -= reduce_amount;
 
             //Send the reduced vault tokens to the user as a BankMsg
