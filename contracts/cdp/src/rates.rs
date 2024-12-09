@@ -98,6 +98,7 @@ pub fn update_rate_indices(
     supply_caps: &mut Vec<SupplyCap>,
     negative_rate: bool,
     credit_price_rate: Decimal,
+    rate_slope_multiplier: Decimal,
 ) -> StdResult<()>{
     //Get basket rates
     let mut interest_rates = match get_interest_rates(storage, querier, env.clone(), basket, supply_caps){
@@ -130,12 +131,12 @@ pub fn update_rate_indices(
                 };
             }            
         } else {
-            rate += credit_price_rate;
+            rate += decimal_multiplication(credit_price_rate, rate_slope_multiplier)?;
         }
 
-        rate
+        Ok(rate)
     })
-    .collect::<Vec<Decimal>>();
+    .collect::<StdResult<Vec<Decimal>>>()?;
     //This allows us to prioritize credit stability over profit/state of the basket
     //This means base_interest_rate + margin_of_error is the range above peg before rates go to 0
     
@@ -371,7 +372,7 @@ fn get_credit_rate_of_change(
     negative_rate: bool,
     credit_price_rate: Decimal,
 ) -> StdResult<(Decimal, Vec<Decimal>)> {
-    let (ratios, _) = match get_cAsset_ratios(storage, env.clone(), querier, position.clone().collateral_assets, config, Some(basket.clone())){
+    let (ratios, _) = match get_cAsset_ratios(storage, env.clone(), querier, position.clone().collateral_assets, config.clone(), Some(basket.clone())){
         Ok(ratios) => ratios,
         Err(err) => {
             return Err(StdError::GenericErr {
@@ -387,7 +388,7 @@ fn get_credit_rate_of_change(
         Err(_err) => basket.clone().collateral_supply_caps
     };
     
-    match update_rate_indices(storage, querier, env, basket, &mut supply_caps, negative_rate, credit_price_rate){
+    match update_rate_indices(storage, querier, env, basket, &mut supply_caps, negative_rate, credit_price_rate, config.rate_slope_multiplier){
         Ok(_ok) => {},
         Err(err) => {
             return Err(StdError::GenericErr {
