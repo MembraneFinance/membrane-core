@@ -471,6 +471,7 @@ fn manage_vault(
                 amount: Some(amount_to_mint),
                 LTV: None,
                 mint_to_addr: None,
+                mint_intent: None,
             })?,
             funds: vec![],
         });
