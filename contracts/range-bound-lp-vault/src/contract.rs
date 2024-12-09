@@ -728,7 +728,7 @@ fn exit_vault(
 
     //Send the withdrawn tokens to the user
     let send_deposit_tokens_msg: CosmosMsg = BankMsg::Send {
-        to_address: send_to,
+        to_address: send_to.clone(),
         amount: user_withdrawn_coins.clone(),
     }.into();
     //Add to msgs
@@ -756,8 +756,9 @@ fn exit_vault(
     //Save the updated config
     CONFIG.save(deps.storage, &config)?;
 
-    //Add rate assurance callback msg if this withdrawal leaves other depositors with tokens to withdraw
-    if !new_vault_token_supply.is_zero() && withdrawal_ratio != Decimal::one() {
+    //Add rate assurance callback msg if this withdrawal leaves other depositors with tokens to withdraw.
+    //We skip if the contract is send_to bc it'll leave tokens in the vault.
+    if !new_vault_token_supply.is_zero() && withdrawal_ratio != Decimal::one() && send_to == env.contract.address.to_string() {
         //UNCOMMENT
         msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: env.contract.address.to_string(),
