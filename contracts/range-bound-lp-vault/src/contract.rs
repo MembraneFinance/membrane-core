@@ -1394,6 +1394,13 @@ fn repay_user_debt(
 
     //Save user intent state
     USER_INTENT_STATE.save(deps.storage, user_info.position_owner.clone(), &user_intent_state)?;
+    
+    //Save Repay propagation
+    CDP_REPAY_PROPAGATION.save(deps.storage, &RepayProp {
+        user_info: user_info.clone(),
+        prev_cdt_balance: deps.querier.query_balance(env.contract.address.to_string(), config.range_tokens.ceiling_deposit_token.clone())?.amount,
+        prev_usdc_balance: deps.querier.query_balance(env.contract.address.to_string(), config.range_tokens.floor_deposit_token.clone())?.amount,
+    })?;
 
     //Create exit vault msg    
     let exit_vault_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
