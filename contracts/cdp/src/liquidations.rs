@@ -98,7 +98,7 @@ pub fn liquidate(
         config.clone(),
     )?;
 
-    let current_LTV = Decimal::percent(90);
+    let current_LTV = Decimal::percent(96);
     let insolvent = true;
     
     if !insolvent {
