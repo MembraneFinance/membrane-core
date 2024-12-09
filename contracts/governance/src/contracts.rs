@@ -682,7 +682,8 @@ pub fn check_messages(
                     position_id, 
                     amount: Some(cdp_config.debt_minimum * Uint128::new(1_000_000)), 
                     LTV: None, 
-                    mint_to_addr: None
+                    mint_to_addr: None,
+                    mint_intent: None
                 })?,
                 funds: vec![],
             }));
