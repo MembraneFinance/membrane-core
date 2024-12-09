@@ -97,9 +97,6 @@ pub fn liquidate(
         false,
         config.clone(),
     )?;
-
-    let current_LTV = Decimal::percent(96);
-    let insolvent = true;
     
     if !insolvent {
         return Err(ContractError::PositionSolvent {});
@@ -136,7 +133,7 @@ pub fn liquidate(
     let pre_user_repay_repay_amount = credit_repay_amount;
 
     //Get amount of repayment user can repay from the Stability Pool
-    // let user_sp_repay_amount = get_user_repay_amount(querier, config.clone(), basket.clone(), position_id, position_owner.clone(), &mut credit_repay_amount, &mut submessages)?;
+    let user_sp_repay_amount = get_user_repay_amount(querier, config.clone(), basket.clone(), position_id, position_owner.clone(), &mut credit_repay_amount, &mut submessages)?;
 
     //Get amount of repayment user can repay from the Range Bound LP Vault
     let user_rblp_repay_amount = get_rblp_user_repay_amount(querier, config.clone(), basket.clone(), position_id, position_owner.clone(), &mut credit_repay_amount, &mut submessages)?;
