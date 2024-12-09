@@ -444,17 +444,17 @@ pub struct CloseIntent { //Unloop/Close
 }
 
 #[cw_serde]
-pub struct EnterLPIntent { //Enter RB LP Vault
+/// Enter RB LP Vault Intent
+pub struct EnterLPIntent {
+    pub user: String,
+    pub position_id: Uint128,
     pub mint_to_ltv: Decimal,
-    pub initiations: IntentInitiations,
 }
 
 #[cw_serde]
 pub struct CDPUserIntents { 
     pub user: String,
-    pub loop_intent: Option<LoopIntent>,
-    pub close_intent: Option<CloseIntent>,
-    pub enter_lp_intent: Option<EnterLPIntent>,
+    pub enter_lp_intents: Vec<EnterLPIntent>,
 }
 
 /// Osmosis PoolInfo

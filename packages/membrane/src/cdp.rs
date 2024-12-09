@@ -1,7 +1,7 @@
 use cosmwasm_std::{Addr, Decimal, Uint128, StdResult, Api, StdError};
 use cosmwasm_schema::cw_serde;
 
-use crate::types::{
+use crate::types::{ EnterLPIntent,
     cAsset, Asset, AssetInfo, InsolventPosition, RevenueDestination,
     SupplyCap, MultiAssetSupplyCap, TWAPPoolInfo, UserInfo, PoolType, Basket, equal, PremiumInfo,
 };
@@ -67,6 +67,8 @@ pub enum ExecuteMsg {
         LTV: Option<Decimal>,
         /// Mint debt tokens to this address
         mint_to_addr: Option<String>,
+        /// Contract uses this to mint for a user into the Range Bound Vault
+        mint_intent: Option<EnterLPIntent>,
     },
     /// Withdraw collateral from a Position
     Withdraw {
@@ -124,15 +126,21 @@ pub enum ExecuteMsg {
         /// Positon ID to accrue interest for
         position_ids: Vec<Uint128>
     },
-    // Close a Position by selling collateral and repaying debt
-    // ClosePosition {
-    //     /// Position ID to close
-    //     position_id: Uint128,
-    //     /// Max spread for the sale of collateral
-    //     max_spread: Decimal,
-    //     /// Send excess assets to this address if not the Position owner
-    //     send_to: Option<String>,
-    // },
+    /// Close a Position by selling collateral and repaying debt
+    ClosePosition {
+        /// Position ID to close
+        position_id: Uint128,
+        /// Max spread for the sale of collateral
+        max_spread: Decimal,
+        /// Send excess assets to this address if not the Position owner
+        send_to: Option<String>,
+    },
+    SetUserIntents { 
+        /// Set an LTV for the "mint to Range Bound Vault" intent. If set to 0, removes the intent.
+        mint_intent: Option<EnterLPIntent>,
+    },
+    /// Fulfill minting intent
+    FulfillIntent{ users: Vec<String> },
     /// Edit the contract's Basket
     EditBasket(EditBasket),
     /// Edit a cAsset in the contract's Basket
@@ -199,6 +207,11 @@ pub enum QueryMsg {
         position_info: UserInfo,
         /// LTV to mint to
         LTV: Decimal,
+    },
+    GetUserIntent { 
+        start_after: Option<String>,
+        limit: Option<u32>,
+        users: Vec<String> 
     },
     // Returns insolvency status of a Position
     // GetPositionInsolvency {

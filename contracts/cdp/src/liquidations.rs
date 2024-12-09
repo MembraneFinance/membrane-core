@@ -8,6 +8,7 @@ use membrane::helpers::{pool_query_and_exit, query_stability_pool_fee, asset_to_
 use membrane::math::{decimal_multiplication, decimal_division, decimal_subtraction, Uint256};
 use membrane::cdp::{Config, ExecuteMsg, CallbackMsg};
 use membrane::oracle::PriceResponse;
+use membrane::range_bound_lp_vault::{ExecuteMsg as RBLP_ExecuteMsg, QueryMsg as RBLP_QueryMsg, UserIntentResponse};
 use membrane::osmosis_proxy::QueryMsg as OsmoQueryMsg;
 use membrane::stability_pool::{LiquidatibleResponse as SP_LiquidatibleResponse, ExecuteMsg as SP_ExecuteMsg, QueryMsg as SP_QueryMsg};
 use membrane::liq_queue::{ExecuteMsg as LQ_ExecuteMsg, QueryMsg as LQ_QueryMsg, LiquidatibleResponse as LQ_LiquidatibleResponse};
@@ -132,7 +133,13 @@ pub fn liquidate(
     let pre_user_repay_repay_amount = credit_repay_amount;
 
     //Get amount of repayment user can repay from the Stability Pool
-    let user_repay_amount = get_user_repay_amount(querier, config.clone(), basket.clone(), position_id, position_owner.clone(), &mut credit_repay_amount, &mut submessages)?;
+    let user_sp_repay_amount = get_user_repay_amount(querier, config.clone(), basket.clone(), position_id, position_owner.clone(), &mut credit_repay_amount, &mut submessages)?;
+
+    //Get amount of repayment user can repay from the Range Bound LP Vault
+    let user_rblp_repay_amount = get_rblp_user_repay_amount(querier, config.clone(), basket.clone(), position_id, position_owner.clone(), &mut credit_repay_amount, &mut submessages)?;
+
+    //Set user_repay_amount
+    let user_repay_amount: Decimal = user_sp_repay_amount + user_rblp_repay_amount;
     
     //Track total leftover repayment after the liq_queue
     let leftover_repayment: Decimal = credit_repay_amount;
@@ -398,6 +405,87 @@ fn get_user_repay_amount(
             //Subtract Repay amount from credit_repay_amount for the liquidation
             *credit_repay_amount = decimal_subtraction(*credit_repay_amount, user_repay_amount)?;
         }
+    }
+
+    Ok( user_repay_amount )
+}
+
+/// Calculate amount of debt the User can repay from the Range Bound LP Vault
+fn get_rblp_user_repay_amount(
+    querier: QuerierWrapper,
+    config: Config,
+    basket: Basket,
+    position_id: Uint128,
+    position_owner: String,
+    credit_repay_amount: &mut Decimal,
+    submessages: &mut Vec<SubMsg>,
+) -> StdResult<Decimal>{
+
+    let mut user_repay_amount = Decimal::zero();
+    //Query RBLP's UserIntentState to see if the user has funds sitting in the vault
+    let user_intents: Vec<UserIntentResponse> = match querier
+        .query::<Vec<UserIntentResponse>>(&QueryRequest::Wasm(WasmQuery::Smart {
+            contract_addr: "osmo17rvvd6jc9javy3ytr0cjcypxs20ru22kkhrpwx7j3ym02znuz0vqa37ffx".to_string(),
+            msg: to_binary(&RBLP_QueryMsg::GetUserIntent { 
+                start_after: None, 
+                limit: None, 
+                users: vec![position_owner.clone()],
+            })?,
+        })){
+            Ok(res) => res,
+            Err(_) => vec![],
+        };
+    //Return early if the user has no funds in the vault
+    if user_intents.is_empty() {
+        return Ok(Decimal::zero());
+    }
+    let user_intent: UserIntentResponse = user_intents[0].clone();
+
+    let user_vault_token_holdings = user_intent.intent.vault_tokens;
+
+    //Query for the underlying CDT in the user's VTs
+    let underlying_cdt: Uint128 = match querier
+        .query::<Uint128>(&QueryRequest::Wasm(WasmQuery::Smart {
+            contract_addr: "osmo17rvvd6jc9javy3ytr0cjcypxs20ru22kkhrpwx7j3ym02znuz0vqa37ffx".to_string(),
+            msg: to_binary(&RBLP_QueryMsg::VaultTokenUnderlying { vault_token_amount: user_vault_token_holdings })?,
+        })){
+            Ok(res) => res,
+            Err(_) => Uint128::zero(),
+        };
+    let underlying_cdt = Decimal::from_ratio(underlying_cdt, Uint128::one());
+        
+    //If the user has funds, tell the RBLP to repay and subtract from credit_repay_amount
+    if !underlying_cdt.is_zero() {
+        //Set Repayment amount to what needs to get liquidated or total_deposits
+        user_repay_amount = {
+            //Repay the full debt
+            if underlying_cdt > *credit_repay_amount {
+                *credit_repay_amount
+            } else {
+                underlying_cdt
+            }
+        };
+
+        //Add Repay SubMsg
+        let repay_msg = RBLP_ExecuteMsg::RepayUserDebt {
+            user_info: UserInfo {
+                position_id,
+                position_owner,
+            },
+            repayment: user_repay_amount.to_uint_floor()
+        };
+        let msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: "osmo17rvvd6jc9javy3ytr0cjcypxs20ru22kkhrpwx7j3ym02znuz0vqa37ffx".to_string(),
+            msg: to_binary(&repay_msg)?,
+            funds: vec![],
+        });
+
+        //Convert to submsg
+        let sub_msg: SubMsg = SubMsg::reply_on_error(msg, BAD_DEBT_REPLY_ID); //This just means no error on errors in the RBLP's msg
+        submessages.push(sub_msg);
+
+        //Subtract Repay amount from credit_repay_amount for the liquidation
+        *credit_repay_amount = decimal_subtraction(*credit_repay_amount, user_repay_amount)?;
     }
 
     Ok( user_repay_amount )

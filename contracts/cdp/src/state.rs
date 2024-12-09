@@ -4,7 +4,7 @@ use cosmwasm_std::{Addr, Decimal, Uint128, Storage, QuerierWrapper, Env, StdResu
 use cosmwasm_schema::cw_serde;
 use cw_storage_plus::{Item, Map};
 
-use membrane::types::{cAsset, Asset, AssetInfo, Basket, Position, RedemptionInfo, StoredPrice, UserInfo};
+use membrane::types::{cAsset, Asset, AssetInfo, Basket, CDPUserIntents, Position, RedemptionInfo, StoredPrice, UserInfo};
 use membrane::cdp::Config;
 
 use crate::ContractError;
@@ -89,6 +89,8 @@ pub const LIQUIDATION: Item<LiquidationPropagation> = Item::new("repay_propagati
 pub const CLOSE_POSITION: Item<ClosePositionPropagation> = Item::new("close_position_propagation");
 //Freeze Timer
 pub const FREEZE_TIMER: Item<Timer> = Item::new("freeze_timer");
+//Intents
+pub const USER_INTENTS: Map<String, CDPUserIntents> = Map::new("user_intents");
 
 //Helper functions
 /// Update asset claims a Position has

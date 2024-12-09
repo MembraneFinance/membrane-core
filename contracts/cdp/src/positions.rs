@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::str::FromStr;
 use std::vec;
 
@@ -8,7 +9,7 @@ use cosmwasm_std::{
 };
 
 use membrane::helpers::{validate_position_owner, asset_to_coin, withdrawal_msg, get_contract_balances};
-use membrane::cdp::{Config, EditBasket};
+use membrane::cdp::{Config, EditBasket, ExecuteMsg};
 use membrane::oracle::{AssetResponse, PriceResponse};
 use membrane::liq_queue::ExecuteMsg as LQ_ExecuteMsg;
 use membrane::liquidity_check::ExecuteMsg as LiquidityExecuteMsg;
@@ -16,9 +17,10 @@ use membrane::staking::{ExecuteMsg as Staking_ExecuteMsg, QueryMsg as Staking_Qu
 use membrane::oracle::{ExecuteMsg as OracleExecuteMsg, QueryMsg as OracleQueryMsg};
 use membrane::osmosis_proxy::{ExecuteMsg as OsmoExecuteMsg, QueryMsg as OsmoQueryMsg };
 use membrane::stability_pool::ExecuteMsg as SP_ExecuteMsg;
+use membrane::range_bound_lp_vault::{ExecuteMsg as RBLP_ExecuteMsg, LeaveTokens};
 use membrane::math::{decimal_division, decimal_multiplication, Uint256, decimal_subtraction};
 use membrane::types::{
-    cAsset, Asset, AssetInfo, AssetOracleInfo, Basket, LPAssetInfo, LiquidityInfo, PoolInfo, PoolStateResponse, PoolType, Position, PositionRedemption, RedemptionInfo, RevenueDestination, SupplyCap, UserInfo
+    cAsset, Asset, AssetInfo, AssetOracleInfo, Basket, CDPUserIntents, EnterLPIntent, LPAssetInfo, LiquidityInfo, PoolInfo, PoolStateResponse, PoolType, Position, PositionRedemption, PurchaseIntent, RangeBoundUserIntents, RedemptionInfo, RevenueDestination, SupplyCap, UserInfo
 };
 
 use crate::query::{get_cAsset_ratios, get_avg_LTV, insolvency_check};
@@ -27,7 +29,7 @@ use crate::risk_engine::update_basket_tally;
 use crate::state::{get_target_position, update_position, update_position_claims, ClosePositionPropagation, CollateralVolatility, Timer, BASKET, CLOSE_POSITION, FREEZE_TIMER, REDEMPTION_OPT_IN, STORED_PRICES, VOLATILITY};
 use crate::{
     state::{
-        WithdrawPropagation, CONFIG, POSITIONS, LIQUIDATION, WITHDRAW,
+        WithdrawPropagation, CONFIG, POSITIONS, LIQUIDATION, WITHDRAW, USER_INTENTS
     },
     ContractError,
 };
@@ -473,6 +475,21 @@ pub fn withdraw(
                         POSITIONS.remove(deps.storage, valid_position_owner.clone());
                     }
 
+                    //If new position is empty, remove from UserIntentState
+                    if check_for_empty_position(target_position.clone().collateral_assets){
+                        //Remove position from UserIntentState                        
+                        let mut intents = USER_INTENTS.load(deps.storage, valid_position_owner.clone()).unwrap_or_else(|| CDPUserIntents {
+                            user: valid_position_owner.clone(),
+                            enter_lp_intents: vec![],
+                        });
+                        intents.enter_lp_intents = intents.enter_lp_intents.into_iter().filter(|intent| intent.position_id != position_id).collect();
+
+                        if intents.enter_lp_intents.is_empty(){
+                            USER_INTENTS.remove(deps.storage, valid_position_owner.clone());
+                        } else {
+                            USER_INTENTS.save(deps.storage, valid_position_owner.clone(), &intents)?;
+                        }
+                    }
                 }
                 
                 //Push withdraw asset to list for withdraw prop
@@ -928,6 +945,102 @@ pub fn liq_repay(
         .add_attribute("excess", excess_repayment))
 }
 
+//Set mint to RBLP Intent
+pub fn set_intents(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+    mint_intent: Option<EnterLPIntent>,
+) -> Result<Response, ContractError> {
+
+    //Save LTV for "Mint to Range Bound Vault" intent
+    if let Some(mint_intent) = mint_intent.clone() {
+        //Get Target position to check ownership
+        let (_, _) = get_target_position(deps.storage, info.clone().sender, mint_intent.position_id)?;
+
+        USER_INTENTS.update(deps.storage, info.clone().sender.to_string(), |intents| -> Result<CDPUserIntents, ContractError> {
+            let mut intents = intents.unwrap_or_else(|| CDPUserIntents {
+                user: info.clone().sender.to_string(),
+                enter_lp_intents: vec![],
+            });
+            //Add, or edit intent if position id is the same
+            if let Some((index, _)) = intents.enter_lp_intents.iter().enumerate().find(|(_i, intent)| intent.position_id == mint_intent.position_id){
+                intents.enter_lp_intents[index].mint_to_ltv = mint_intent.mint_to_ltv;
+            } else {
+                intents.enter_lp_intents.push(mint_intent);
+            }
+            Ok(intents)
+        })?;
+    }
+
+    Ok(Response::new()
+        .add_attribute("method", "set_intents")
+        .add_attribute("mint_intent", format!("{:?}", mint_intent)))
+}
+
+/// Fulfill mint to RBLP Intents
+pub fn fulfill_intents(
+    deps: DepsMut,
+    env: Env,
+    _info: MessageInfo,
+    users: Vec<String>,
+) -> Result<Response, ContractError> {
+    let mut msgs: Vec<CosmosMsg> = vec![];
+    //Load state    
+    let basket: Basket = BASKET.load(deps.storage)?;
+    let config: Config = CONFIG.load(deps.storage)?;
+
+    for user in users {
+        //Load intent for user
+        let intents = USER_INTENTS.load(deps.storage, user.clone())?;
+
+        for intent in intents.enter_lp_intents {
+            //Get target position
+            let (_, target_position) = get_target_position(deps.storage, deps.api.addr_validate(&user.clone())?, intent.position_id)?;
+
+            //Get LTV for the target position   
+            let ((_, LTV, _), (_)) = insolvency_check(
+                deps.storage,
+                env.clone(),
+                deps.querier,
+                Some(basket.clone()),
+                target_position.clone().collateral_assets,
+                target_position.clone().credit_amount,
+                basket.clone().credit_price,
+                false,
+                config.clone(),
+            )?;
+
+            //If the LTV is below the mint_to_ltv, create mint msg
+            if LTV < intent.mint_to_ltv {
+                //Create increase_debt msg to this contract
+                msgs.push(
+                    CosmosMsg::Wasm(WasmMsg::Execute {
+                        contract_addr: env.contract.address.to_string(),
+                        msg: to_json_binary(&ExecuteMsg::IncreaseDebt {
+                            position_id: intent.position_id,
+                            amount: None,
+                            LTV: Some(intent.mint_to_ltv),
+                            mint_to_addr: None,
+                            mint_intent: Some(intent.clone()),
+                        })?,
+                        funds: vec![],
+                    })
+                );
+            }
+        }
+    }
+
+    //Fee to caller?
+    // Not until we know the frequency of this call relative to the yield distribution.
+    // We don't want the user to get ground between the liquidation fee & this auto-remint fee.
+    // So as the user you still want a relatively conservative LTV to buy time for the yield distrbution to come in. Probably (e.g. 70% max_LTV = 45%)
+
+    Ok(Response::new()
+        .add_messages(msgs)
+        .add_attribute("method", "fulfill_intents"))
+}
+
 /// Increase debt of a position.
 /// Accrue and validate credit amount.
 /// Check for insolvency & update basket debt tally.
@@ -939,6 +1052,8 @@ pub fn increase_debt(
     amount: Option<Uint128>,
     LTV: Option<Decimal>,
     mint_to_addr: Option<String>,
+    // Contract uses this to mint for a user into the Range Bound Vault
+    mint_intent: Option<EnterLPIntent>,
 ) -> Result<Response, ContractError> {
     let config: Config = CONFIG.load(deps.storage)?;
     let mut basket: Basket = BASKET.load(deps.storage)?;
@@ -947,8 +1062,14 @@ pub fn increase_debt(
     //Check if frozen
     if basket.frozen { return Err(ContractError::Frozen {  }) }
 
+    //Only the contract can send mint_intents
+    if mint_intent.is_some() && info.sender != env.contract.address {
+        return Err(ContractError::Unauthorized { owner: config.owner.to_string() });
+    }
+
     //Get Target position
     let (position_index, mut target_position) = get_target_position(deps.storage, info.clone().sender, position_id)?;
+
     
     //If any cAsset is a rate_hike asset, force a redemption 
     for cAsset in target_position.collateral_assets.clone(){
@@ -994,6 +1115,9 @@ pub fn increase_debt(
         None => {
             if let Some(LTV) = LTV {
                 get_amount_from_LTV(deps.storage, deps.querier, env.clone(), config.clone(), target_position.clone(), basket.clone(), LTV)?
+            } else if let Some(intent) = mint_intent.clone() {
+                //Get LTV from intent
+                get_amount_from_LTV(deps.storage, deps.querier, env.clone(), config.clone(), target_position.clone(), basket.clone(), intent.mint_to_ltv)?
             } else {
                 return Err(ContractError::CustomError { val: String::from("If amount isn't passed, LTV must be passed") })
             }            
@@ -1009,12 +1133,12 @@ pub fn increase_debt(
         return Err(ContractError::BelowMinimumDebt { minimum: config.debt_minimum, debt: basket.clone().credit_price.get_value(target_position.credit_amount)?.to_uint_floor() });
     }
 
-    let message: CosmosMsg;
+    let mut messages: Vec<CosmosMsg> = vec![];
 
     //Can't take credit before an oracle is set
     if basket.oracle_set {
         //If resulting LTV makes the position insolvent, error. If not construct mint msg
-        let (insolvency_res, _) = insolvency_check(
+        let (insolvency_res, avg_LTV_res) = insolvency_check(
             deps.storage,
             env.clone(),
             deps.querier,
@@ -1033,18 +1157,56 @@ pub fn increase_debt(
             let recipient = {
                 if let Some(mint_to) = mint_to_addr {
                     deps.api.addr_validate(&mint_to)?
+                }               
+                else if let Some(_) = mint_intent.clone() {
+                    //mint to the contract so it can send it to the RBLP
+                    env.contract.address
                 } else {
                     info.clone().sender
                 }
             };
-            message = credit_mint_msg(
+            //Add mint msg
+            messages.push( credit_mint_msg(
                 config.clone(),
                 Asset {
-                    amount,
+                    amount: amount.clone(),
                     ..basket.clone().credit_asset
                 },
                 recipient,
-            )?;
+            )? );
+            //If intent, add RBLP entry message
+            if let Some(intent) = mint_intent.clone() {
+                //Create compounding purchase intents for all the positions assets
+                let purchase_intents: Vec<PurchaseIntent> = target_position.collateral_assets.clone().into_iter().enumerate().map(|(index, cAsset)| PurchaseIntent {
+                    desired_asset: cAsset.asset.info.to_string(),
+                    route: None,
+                    yield_percent: avg_LTV_res.4[index],
+                    position_id: Some(intent.position_id.u128() as u64),
+                    slippage: None,
+                }).collect();
+
+                messages.push( CosmosMsg::Wasm(WasmMsg::Execute {
+                    contract_addr: "osmo17rvvd6jc9javy3ytr0cjcypxs20ru22kkhrpwx7j3ym02znuz0vqa37ffx".to_string(),
+                    msg: to_json_binary(&RBLP_ExecuteMsg::EnterVault { 
+                        leave_vault_tokens_in_vault: Some(
+                            LeaveTokens {
+                                percent_to_leave: Decimal::one(),
+                                intent_for_tokens: RangeBoundUserIntents {
+                                    user: intent.user,
+                                    last_conversion_rate: Uint128::zero(),
+                                    purchase_intents,
+                                }
+                            }
+                        )
+                    })?,
+                    funds: vec![
+                        Coin {
+                            denom: basket.credit_asset.info.to_string(),
+                            amount,
+                        }
+                    ],
+                }) );
+            }
 
             //Add credit amount to the position
             //Update Position
@@ -1090,11 +1252,12 @@ pub fn increase_debt(
     }
 
     let response = Response::new()
-        .add_message(message)
+        .add_messages(messages)
         .add_attribute("method", "increase_debt")
         .add_attribute("position_id", position_id.to_string())
         .add_attribute("total_loan", target_position.credit_amount.to_string())
-        .add_attribute("increased_by", amount.to_string());
+        .add_attribute("increased_by", amount.to_string())
+        .add_attribute("mint_intent", format!("{:?}", mint_intent));
 
     Ok(response)
 }
@@ -1118,7 +1281,7 @@ pub fn close_position(
 
     //Set close_percentage
     let close_percentage = match close_percentage {
-        Some(close_percentage) => close_percentage,
+        Some(close_percentage) => min(close_percentage, Decimal::one()),
         None => Decimal::one(),
     };
 
