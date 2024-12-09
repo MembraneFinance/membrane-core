@@ -1103,8 +1103,8 @@ fn set_intents(
     //Load user intents state
     let mut user_intent_state = match USER_INTENT_STATE.load(deps.storage, info.clone().sender.to_string()){
         Ok(mut state) => {
-            //If the user has intents set, update them
-            state.intents = intents;
+            //Update purchase intents only
+            state.intents.purchase_intents = intents.purchase_intents;
 
             //Make sure the yield distribution isn't over 100%
             if state.intents.purchase_intents.clone().into_iter().map(|intent| intent.yield_percent).sum::<Decimal>() > Decimal::one() {
