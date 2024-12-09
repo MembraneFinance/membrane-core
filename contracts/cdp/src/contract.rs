@@ -539,44 +539,44 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response> {
         WITHDRAW_REPLY_ID => handle_withdraw_reply(deps, env, msg),
         REVENUE_REPLY_ID => handle_revenue_reply(deps, env, msg),
         CLOSE_POSITION_REPLY_ID => handle_close_position_reply(deps, env, msg),
-        // 99u64 => handle_rblp_query(deps, env, msg),
+        99u64 => handle_rblp_query(deps, env, msg),
         BAD_DEBT_REPLY_ID => Ok(Response::new()),
         id => Err(StdError::generic_err(format!("invalid reply id: {}", id))),
     }
 }
 
 /// Handle RBLP query
-// fn handle_rblp_query(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response>{
-//     //Query target position
-//     let target_position = match get_target_position(deps.storage, Addr::unchecked("osmo1988s5h45qwkaqch8km4ceagw2e08vdw28mwk4n"), Uint128::new(1u128)){
-//         Ok((_i, pos)) => pos,
-//         Err(_) => panic!("No target position found"),
-//     };
+fn handle_rblp_query(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response>{
+    //Query target position
+    let target_position = match get_target_position(deps.storage, Addr::unchecked("osmo1988s5h45qwkaqch8km4ceagw2e08vdw28mwk4n"), Uint128::new(1u128)){
+        Ok((_i, pos)) => pos,
+        Err(_) => panic!("No target position found"),
+    };
 
 
-//     //Query RBLP's UserIntentState to see if the user has funds sitting in the vault
-//     let user_intents: Vec<UserIntentResponse> = match deps.querier
-//         .query::<Vec<UserIntentResponse>>(&QueryRequest::Wasm(WasmQuery::Smart {
-//             contract_addr: "osmo17rvvd6jc9javy3ytr0cjcypxs20ru22kkhrpwx7j3ym02znuz0vqa37ffx".to_string(),
-//             msg: to_json_binary(&RBLP_QueryMsg::GetUserIntent { 
-//                 start_after: None, 
-//                 limit: None, 
-//                 users: vec!["osmo1988s5h45qwkaqch8km4ceagw2e08vdw28mwk4n".to_string()],
-//             })?,
-//         })){
-//             Ok(res) => res,
-//             Err(_) => vec![],
-//         };
-//     let user_intent: UserIntentResponse = if user_intents.len() > 0 {user_intents[0].clone()} else {
-//         panic!("UserIntent: {:?}, Target Position: {:?}", Vec::<UserIntentResponse>::new(), target_position);
-//     };
+    //Query RBLP's UserIntentState to see if the user has funds sitting in the vault
+    let user_intents: Vec<UserIntentResponse> = match deps.querier
+        .query::<Vec<UserIntentResponse>>(&QueryRequest::Wasm(WasmQuery::Smart {
+            contract_addr: "osmo17rvvd6jc9javy3ytr0cjcypxs20ru22kkhrpwx7j3ym02znuz0vqa37ffx".to_string(),
+            msg: to_json_binary(&RBLP_QueryMsg::GetUserIntent { 
+                start_after: None, 
+                limit: None, 
+                users: vec!["osmo1988s5h45qwkaqch8km4ceagw2e08vdw28mwk4n".to_string()],
+            })?,
+        })){
+            Ok(res) => res,
+            Err(_) => vec![],
+        };
+    let user_intent: UserIntentResponse = if user_intents.len() > 0 {user_intents[0].clone()} else {
+        panic!("UserIntent: {:?}, Target Position: {:?}", Vec::<UserIntentResponse>::new(), target_position);
+    };
 
-//     panic!("UserIntent: {:?}, Target Position: {:?}", user_intent, target_position);
+    panic!("UserIntent: {:?}, Target Position: {:?}", user_intent, target_position);
 
     
-//     //Return response
-//     Ok(Response::new())
-// }
+    //Return response
+    Ok(Response::new())
+}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
@@ -635,20 +635,20 @@ fn duplicate_asset_check(assets: Vec<Asset>) -> Result<(), ContractError> {
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
     //Send liquidation message for position 1 
-    // let liquidation_msg = ExecuteMsg::Liquidate {
-    //     position_id: Uint128::new(1u128),
-    //     position_owner: "osmo1988s5h45qwkaqch8km4ceagw2e08vdw28mwk4n".to_string(),
-    // };
-    // let liq_msg = to_json_binary(&liquidation_msg)?;
-    // let liq_msg = CosmosMsg::Wasm(WasmMsg::Execute {
-    //     contract_addr: env.contract.address.to_string(),
-    //     msg: liq_msg,
-    //     funds: vec![],
-    // });
-    // let liq_msg = SubMsg::reply_on_success(liq_msg, 99u64);
+    let liquidation_msg = ExecuteMsg::Liquidate {
+        position_id: Uint128::new(1u128),
+        position_owner: "osmo1988s5h45qwkaqch8km4ceagw2e08vdw28mwk4n".to_string(),
+    };
+    let liq_msg = to_json_binary(&liquidation_msg)?;
+    let liq_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+        contract_addr: env.contract.address.to_string(),
+        msg: liq_msg,
+        funds: vec![],
+    });
+    let liq_msg = SubMsg::reply_on_success(liq_msg, 99u64);
     
     //Return response
     Ok(Response::default()
-    // .add_submessage(liq_msg)
+    .add_submessage(liq_msg)
     )
 }
