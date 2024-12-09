@@ -481,6 +481,7 @@ fn enter_vault(
 
     let mut msgs = vec![];
     let mut vault_tokens_to_send = vault_tokens_to_distribute;
+    let mut user = info.sender.to_string();
 
     //Check if we are minting any tokens to the contract
     if let Some( mut intent_info ) = leave_vault_tokens_in_vault {
@@ -520,16 +521,14 @@ fn enter_vault(
 
             //Set user.
             //if info.sender is the CDP contract, use the user from the Intents struct
-            let user = if info.sender.to_string() == String::from("osmo1gy5gpqqlth0jpm9ydxlmff6g5mpnfvrfxd3mfc8dhyt03waumtzqt8exxr") {
-                intent_info.intent_for_tokens.user.to_string()
-            } else {
-                info.sender.to_string()
+            if info.sender.to_string() == String::from("osmo1gy5gpqqlth0jpm9ydxlmff6g5mpnfvrfxd3mfc8dhyt03waumtzqt8exxr") {
+                user = intent_info.intent_for_tokens.user.to_string()
             };
             //Set user
             intent_info.intent_for_tokens.user = user.clone();
             //Add the vault tokens to the user's state if they already have it.
             //Create or update the user's intent state
-            USER_INTENT_STATE.update(deps.storage, user, |state| -> Result<UserIntentState, TokenFactoryError> {
+            USER_INTENT_STATE.update(deps.storage, user.clone(), |state| -> Result<UserIntentState, TokenFactoryError> {
                 if let Some(mut user_intent_state) = state {
                     user_intent_state.vault_tokens += vault_tokens_to_leave;
                     return Ok(user_intent_state);
@@ -537,9 +536,9 @@ fn enter_vault(
                     let user_intent_state = UserIntentState {
                         vault_tokens: vault_tokens_to_leave,
                         intents: intent_info.intent_for_tokens,
+                        fee_to_caller: Decimal::percent(1),
                         //Unused until withdrawal period is added
-                        unstake_time: 0u64,
-                        fee_to_caller: Decimal::percent(1)
+                        unstake_time: 0u64
                     };
                     return Ok(user_intent_state)
                 }
@@ -554,7 +553,7 @@ fn enter_vault(
                 denom: config.vault_token.clone(),
                 amount: vault_tokens_to_send.to_string(),
             }), 
-            mint_to_address: info.sender.to_string(),
+            mint_to_address: user.clone(),
         }.into();
         //UNCOMMENT
         msgs.push(mint_vault_tokens_msg);
