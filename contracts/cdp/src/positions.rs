@@ -958,19 +958,29 @@ pub fn set_intents(
         //Get Target position to check ownership
         let (_, _) = get_target_position(deps.storage, info.clone().sender, mint_intent.position_id)?;
 
-        USER_INTENTS.update(deps.storage, info.clone().sender.to_string(), |intents| -> Result<CDPUserIntents, ContractError> {
-            let mut intents = intents.unwrap_or_else(|| CDPUserIntents {
-                user: info.clone().sender.to_string(),
-                enter_lp_intents: vec![],
-            });
-            //Add, or edit intent if position id is the same
-            if let Some((index, _)) = intents.enter_lp_intents.iter().enumerate().find(|(_i, intent)| intent.position_id == mint_intent.position_id){
-                intents.enter_lp_intents[index].mint_to_ltv = mint_intent.mint_to_ltv;
+        //Load UserIntents
+        let mut user_intents = USER_INTENTS.load(deps.storage, info.clone().sender.to_string())?;
+
+        //Add, or edit intent if position id is the same
+        if let Some((index, _)) = user_intents.enter_lp_intents.iter().enumerate().find(|(_i, intent)| intent.position_id == mint_intent.position_id){
+
+            //If mint_to_ltv is 0, remove intent    
+            if mint_intent.mint_to_ltv.is_zero() {
+                user_intents.enter_lp_intents.remove(index);
             } else {
-                intents.enter_lp_intents.push(mint_intent);
+                user_intents.enter_lp_intents[index].mint_to_ltv = mint_intent.mint_to_ltv;
             }
-            Ok(intents)
-        })?;
+        } else {
+            user_intents.enter_lp_intents.push(mint_intent);
+        }
+        //If intent list is empty, remove from state
+        if user_intents.enter_lp_intents.is_empty(){
+            USER_INTENTS.remove(deps.storage, info.clone().sender.to_string());
+        } 
+        //Otherwise save
+        else {
+            USER_INTENTS.save(deps.storage, info.clone().sender.to_string(), &user_intents)?;
+        }
     }
 
     Ok(Response::new()
