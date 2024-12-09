@@ -1,7 +1,7 @@
 use cosmwasm_std::{Addr, Decimal, Uint128, StdResult, Api, StdError};
 use cosmwasm_schema::cw_serde;
 
-use crate::types::{ EnterLPIntent,
+use crate::types::{ EnterLPIntent, CDPUserIntents,
     cAsset, Asset, AssetInfo, InsolventPosition, RevenueDestination,
     SupplyCap, MultiAssetSupplyCap, TWAPPoolInfo, UserInfo, PoolType, Basket, equal, PremiumInfo,
 };
@@ -130,6 +130,8 @@ pub enum ExecuteMsg {
     ClosePosition {
         /// Position ID to close
         position_id: Uint128,
+        /// % of the debt to repay, default 100%
+        close_percentage: Option<Decimal>,
         /// Max spread for the sale of collateral
         max_spread: Decimal,
         /// Send excess assets to this address if not the Position owner
@@ -140,7 +142,7 @@ pub enum ExecuteMsg {
         mint_intent: Option<EnterLPIntent>,
     },
     /// Fulfill minting intent
-    FulfillIntent{ users: Vec<String> },
+    FulfillIntents { users: Vec<String> },
     /// Edit the contract's Basket
     EditBasket(EditBasket),
     /// Edit a cAsset in the contract's Basket
@@ -600,3 +602,10 @@ pub struct InsolvencyResponse {
     /// List of insolvent Positions
     pub insolvent_positions: Vec<InsolventPosition>,
 }
+
+#[cw_serde]
+pub struct UserIntentResponse {
+    pub user: String,
+    pub intent: CDPUserIntents
+}
+

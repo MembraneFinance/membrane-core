@@ -10,7 +10,7 @@ use cw_storage_plus::Bound;
 
 use membrane::oracle::{PriceResponse, QueryMsg as OracleQueryMsg};
 use membrane::cdp::{
-    Config, CollateralInterestResponse,
+    Config, CollateralInterestResponse, UserIntentResponse,
     InterestResponse, PositionResponse, BasketPositionsResponse, RedeemabilityResponse,
 };
 
@@ -20,10 +20,51 @@ use membrane::types::{
 use membrane::math::{decimal_division, decimal_multiplication, decimal_subtraction};
 
 use crate::positions::get_amount_from_LTV;
-use crate::state::{get_target_position, CollateralVolatility, BASKET, CONFIG, POSITIONS, REDEMPTION_OPT_IN, STORED_PRICES, VOLATILITY};
+use crate::state::{get_target_position, USER_INTENTS, CollateralVolatility, BASKET, CONFIG, POSITIONS, REDEMPTION_OPT_IN, STORED_PRICES, VOLATILITY};
 
 const MAX_LIMIT: u32 = 31;
 pub const VOLATILITY_LIST_LIMIT: u32 = 48;
+
+pub fn query_user_intent_state(
+    deps: Deps,
+    _env: Env,
+    start_after: Option<String>,
+    limit: Option<u32>,
+    // Users
+    user: Vec<String>,
+)-> StdResult<Vec<UserIntentResponse>> {
+    let limit = limit.unwrap_or(MAX_LIMIT) as usize;
+
+    let start = if let Some(start) = start_after {
+        Some(Bound::exclusive(start))
+    } else {
+        None
+    };
+
+    if user.len() > 0 {
+        return user
+            .into_iter()
+            .map(|user| {
+                let intent = USER_INTENTS.load(deps.storage, user.clone())?;
+                Ok(UserIntentResponse {
+                    user,
+                    intent,
+                })
+            })
+            .collect();
+    } else {
+        return USER_INTENTS
+            .range(deps.storage, start, None, Order::Ascending)
+            .take(limit)
+            .map(|item| {
+                let (k, v) = item?;
+                Ok(UserIntentResponse {
+                    user: k,
+                    intent: v,
+                })
+            }).collect();
+    }
+}
 
 /// Returns Positions in a Basket
 pub fn query_basket_positions(

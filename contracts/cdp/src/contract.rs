@@ -4,31 +4,31 @@ use std::str::FromStr;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    attr, to_binary, to_json_binary, Addr, Binary, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdError, StdResult, Uint128, WasmMsg
+    attr, to_json_binary,SubMsg, QueryRequest, WasmQuery, Addr, Binary, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdError, StdResult, Uint128, WasmMsg
 };
 
 use membrane::auction::ExecuteMsg as AuctionExecuteMsg;
-use membrane::staking::ExecuteMsg as Staking_ExecuteMsg;
-use membrane::helpers::{assert_sent_native_token_balance, asset_to_coin};
+use membrane::helpers::{assert_sent_native_token_balance};
 use membrane::liq_queue::ExecuteMsg as LQ_ExecuteMsg;
 use membrane::cdp::{Config, CallbackMsg, ExecuteMsg, InstantiateMsg, QueryMsg, UpdateConfig, MigrateMsg};
 use membrane::types::{
-    cAsset, Asset, AssetInfo, Basket, RevenueDestination, UserInfo
+    cAsset, Asset, AssetInfo, Basket, UserInfo
 };
-use membrane::osmosis_proxy::ExecuteMsg as OP_ExecuteMsg;
 
 use crate::error::ContractError;
-use crate::rates::{accrue, external_accrue_call};
+use crate::rates::{external_accrue_call};
 use crate::risk_engine::assert_basket_assets;
 use crate::positions::{
-    create_basket, deposit, edit_basket, edit_redemption_info, increase_debt, liq_repay, redeem_for_collateral, repay, withdraw, BAD_DEBT_REPLY_ID, CLOSE_POSITION_REPLY_ID, LIQ_QUEUE_REPLY_ID, REVENUE_REPLY_ID, WITHDRAW_REPLY_ID
+    close_position, create_basket, deposit, edit_basket, edit_redemption_info, fulfill_intents, increase_debt, liq_repay, redeem_for_collateral, repay, set_intents, withdraw, BAD_DEBT_REPLY_ID, CLOSE_POSITION_REPLY_ID, LIQ_QUEUE_REPLY_ID, REVENUE_REPLY_ID, WITHDRAW_REPLY_ID
 };
 use crate::query::{
-    query_basket_credit_interest, query_basket_positions, query_basket_redeemability, query_collateral_rates, simulate_LTV_mint
+    query_basket_credit_interest, query_basket_positions, query_basket_redeemability, query_collateral_rates, simulate_LTV_mint, query_user_intent_state
 };
 use crate::liquidations::liquidate;
 use crate::reply::{handle_close_position_reply, handle_liq_queue_reply, handle_revenue_reply, handle_withdraw_reply};
-use crate::state::{ get_target_position, update_position, ContractVersion, BASKET, CONFIG, CONTRACT, LIQUIDATION, OWNERSHIP_TRANSFER, POSITIONS, REDEMPTION_OPT_IN, VOLATILITY };
+use crate::state::{ get_target_position, update_position, ContractVersion, BASKET, CONFIG, CONTRACT, LIQUIDATION, OWNERSHIP_TRANSFER};
+
+use membrane::range_bound_lp_vault::{QueryMsg as RBLP_QueryMsg, UserIntentResponse};
 
 // version info for migration info
 const CONTRACT_NAME: &str = "crates.io:cdp";
@@ -174,7 +174,8 @@ pub fn execute(
             amount,
             mint_to_addr,
             LTV,
-        } => increase_debt(deps, env, info, position_id, amount, LTV, mint_to_addr),
+            mint_intent
+        } => increase_debt(deps, env, info, position_id, amount, LTV, mint_to_addr, mint_intent),
         ExecuteMsg::Repay {
             position_id,
             position_owner,
@@ -228,7 +229,7 @@ pub fn execute(
             } else { //This is checked more specifically in repay(). This is solely to guarantee only one asset is checked.
                  Err(ContractError::InvalidCredit {})
             }
-        }
+        },
         ExecuteMsg::EditcAsset {
             asset,
             max_borrow_LTV,
@@ -247,6 +248,18 @@ pub fn execute(
             position_id,
             position_owner,
         ),
+        ExecuteMsg::ClosePosition {
+            position_id, close_percentage, max_spread, send_to,
+        } => close_position(
+            deps, 
+            env,
+            info,
+            position_id,
+            close_percentage,
+            max_spread,
+            send_to),
+        ExecuteMsg::SetUserIntents { mint_intent } => set_intents(deps, env, info, mint_intent),
+        ExecuteMsg::FulfillIntents { users } => fulfill_intents(deps, env, info, users),
         ExecuteMsg::Callback(msg) => {
             if info.sender == env.contract.address {
                 callback_handler(deps, env, msg)
@@ -310,7 +323,7 @@ fn edit_cAsset(
 
                     msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
                         contract_addr: basket.clone().liq_queue.unwrap_or_else(|| Addr::unchecked("")).into_string(),
-                        msg: to_binary(&LQ_ExecuteMsg::UpdateQueue {
+                        msg: to_json_binary(&LQ_ExecuteMsg::UpdateQueue {
                             bid_for: asset.clone().asset.info,
                             max_premium: Some(max_premium),
                             bid_threshold: None,
@@ -497,7 +510,7 @@ fn check_and_fulfill_bad_debt(
 
             messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
                 contract_addr: config.debt_auction.unwrap_or_else(|| Addr::unchecked("")).to_string(),
-                msg: to_binary(&auction_msg)?,
+                msg: to_json_binary(&auction_msg)?,
                 funds: vec![],
             }));
         } else {
@@ -526,21 +539,55 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response> {
         WITHDRAW_REPLY_ID => handle_withdraw_reply(deps, env, msg),
         REVENUE_REPLY_ID => handle_revenue_reply(deps, env, msg),
         CLOSE_POSITION_REPLY_ID => handle_close_position_reply(deps, env, msg),
+        99u64 => handle_rblp_query(deps, env, msg),
         BAD_DEBT_REPLY_ID => Ok(Response::new()),
         id => Err(StdError::generic_err(format!("invalid reply id: {}", id))),
     }
 }
 
+/// Handle RBLP query
+fn handle_rblp_query(deps: DepsMut, env: Env, msg: Reply) -> StdResult<Response>{
+    //Query target position
+    let target_position = match get_target_position(deps.storage, Addr::unchecked("osmo1988s5h45qwkaqch8km4ceagw2e08vdw28mwk4n"), Uint128::new(1u128)){
+        Ok((_i, pos)) => pos,
+        Err(_) => panic!("No target position found"),
+    };
+
+
+    //Query RBLP's UserIntentState to see if the user has funds sitting in the vault
+    let user_intents: Vec<UserIntentResponse> = match deps.querier
+        .query::<Vec<UserIntentResponse>>(&QueryRequest::Wasm(WasmQuery::Smart {
+            contract_addr: "osmo17rvvd6jc9javy3ytr0cjcypxs20ru22kkhrpwx7j3ym02znuz0vqa37ffx".to_string(),
+            msg: to_json_binary(&RBLP_QueryMsg::GetUserIntent { 
+                start_after: None, 
+                limit: None, 
+                users: vec!["osmo1988s5h45qwkaqch8km4ceagw2e08vdw28mwk4n".to_string()],
+            })?,
+        })){
+            Ok(res) => res,
+            Err(_) => vec![],
+        };
+    let user_intent: UserIntentResponse = if user_intents.len() > 0 {user_intents[0].clone()} else {
+        panic!("UserIntent: {:?}, Target Position: {:?}", Vec::<UserIntentResponse>::new(), target_position);
+    };
+
+    panic!("UserIntent: {:?}, Target Position: {:?}", user_intent, target_position);
+
+    
+    //Return response
+    Ok(Response::new())
+}
+
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::Config {} => to_binary(&CONFIG.load(deps.storage)?),
+        QueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
         QueryMsg::GetBasketPositions {
             start_after,
             limit,
             user_info, 
             user,
-        } => to_binary(&query_basket_positions(
+        } => to_json_binary(&query_basket_positions(
             deps,
             env,
             start_after,
@@ -548,18 +595,21 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             user_info, 
             user,
         )?),
-        QueryMsg::GetBasket { } => to_binary(&BASKET.load(deps.storage)?),
+        QueryMsg::GetBasket { } => to_json_binary(&BASKET.load(deps.storage)?),
         QueryMsg::GetBasketRedeemability { position_owner, start_after, limit } => {
-            to_binary(&query_basket_redeemability(deps, position_owner, start_after, limit)?)
+            to_json_binary(&query_basket_redeemability(deps, position_owner, start_after, limit)?)
         }
         QueryMsg::GetCreditRate { } => {
-            to_binary(&query_basket_credit_interest(deps, env)?)
+            to_json_binary(&query_basket_credit_interest(deps, env)?)
         }
         QueryMsg::GetCollateralInterest { } => {
-            to_binary(&query_collateral_rates(deps)?)
+            to_json_binary(&query_collateral_rates(deps)?)
         },
         QueryMsg::SimulateMint { position_info, LTV } => {
-            to_binary(&simulate_LTV_mint(deps, env, position_info, LTV)?)
+            to_json_binary(&simulate_LTV_mint(deps, env, position_info, LTV)?)
+        },
+        QueryMsg::GetUserIntent { start_after, limit, users } => {
+            to_json_binary(&query_user_intent_state(deps, env,  start_after, limit, users)?)
         }
     }
 }
@@ -584,21 +634,19 @@ fn duplicate_asset_check(assets: Vec<Asset>) -> Result<(), ContractError> {
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
-      //accrue position 433
-    // let position_owner = Addr::unchecked("osmo1vf6e300hv2qe7r5rln8deft45ewgyytjnwfrdfcv5rgzrfy0s6cswjqf9r");
-
-    // let config = CONFIG.load(deps.storage)?;
-    // let mut position =    &mut POSITIONS.load(deps.storage, position_owner.clone())?[0];
-    // let mut basket = &mut BASKET.load(deps.storage)?;
-
-    // accrue(
-    //     deps.storage, 
-    //     deps.querier, env.clone(), 
-    //     config,
-    //     position,
-    //     basket,
-    //     String::from("osmo1vf6e300hv2qe7r5rln8deft45ewgyytjnwfrdfcv5rgzrfy0s6cswjqf9r"), false)?;
+    //Send liquidation message for position 1 
+    let liquidation_msg = ExecuteMsg::Liquidate {
+        position_id: Uint128::new(1u128),
+        position_owner: "osmo1988s5h45qwkaqch8km4ceagw2e08vdw28mwk4n".to_string(),
+    };
+    let liq_msg = to_json_binary(&liquidation_msg)?;
+    let liq_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+        contract_addr: env.contract.address.to_string(),
+        msg: liq_msg,
+        funds: vec![],
+    });
+    let liq_msg = SubMsg::reply_on_success(liq_msg, 99u64);
     
     //Return response
-    Ok(Response::default())
+    Ok(Response::default().add_submessage(liq_msg))
 }

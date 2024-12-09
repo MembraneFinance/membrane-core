@@ -478,16 +478,16 @@ pub fn withdraw(
                     //If new position is empty, remove from UserIntentState
                     if check_for_empty_position(target_position.clone().collateral_assets){
                         //Remove position from UserIntentState                        
-                        let mut intents = USER_INTENTS.load(deps.storage, valid_position_owner.clone()).unwrap_or_else(|| CDPUserIntents {
-                            user: valid_position_owner.clone(),
+                        let mut intents = USER_INTENTS.load(deps.storage, valid_position_owner.clone().to_string()).unwrap_or_else(|_| CDPUserIntents {
+                            user: valid_position_owner.clone().to_string(),
                             enter_lp_intents: vec![],
                         });
                         intents.enter_lp_intents = intents.enter_lp_intents.into_iter().filter(|intent| intent.position_id != position_id).collect();
 
                         if intents.enter_lp_intents.is_empty(){
-                            USER_INTENTS.remove(deps.storage, valid_position_owner.clone());
+                            USER_INTENTS.remove(deps.storage, valid_position_owner.clone().to_string());
                         } else {
-                            USER_INTENTS.save(deps.storage, valid_position_owner.clone(), &intents)?;
+                            USER_INTENTS.save(deps.storage, valid_position_owner.clone().to_string(), &intents)?;
                         }
                     }
                 }
