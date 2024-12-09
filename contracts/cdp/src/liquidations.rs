@@ -415,9 +415,9 @@ fn get_user_repay_amount(
 
 /// Calculate amount of debt the User can repay from the Range Bound LP Vault
 fn get_rblp_user_repay_amount(
-    querier: QuerierWrapper,
-    config: Config,
-    basket: Basket,
+    querier: QuerierWrapper,    
+    _config: Config,
+    _basket: Basket,
     position_id: Uint128,
     position_owner: String,
     credit_repay_amount: &mut Decimal,

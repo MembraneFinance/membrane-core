@@ -1344,9 +1344,9 @@ fn repay_user_debt(
     repayment: Uint128, //This is the amount of the deposit asset to repay
 ) -> Result<Response, TokenFactoryError> {
     //Assert sender is the Positions contract
-    if info.sender.to_string() != String::from("osmo1gy5gpqqlth0jpm9ydxlmff6g5mpnfvrfxd3mfc8dhyt03waumtzqt8exxr") {
-        return Err(TokenFactoryError::Unauthorized {});
-    }
+    // if info.sender.to_string() != String::from("osmo1gy5gpqqlth0jpm9ydxlmff6g5mpnfvrfxd3mfc8dhyt03waumtzqt8exxr") {
+    //     return Err(TokenFactoryError::Unauthorized {});
+    // }
 
     //Load config
     let config = CONFIG.load(deps.storage)?;
@@ -1384,7 +1384,7 @@ fn repay_user_debt(
     let repayment = min(repayment, users_total_base_tokens);
 
     //Calculate the amount of vault tokens to exit
-    let vault_tokens_to_exit = calculate_vault_tokens(
+    let vault_tokens_to_exit = calculate_vault_tokens (
         repayment, 
         total_deposit_tokens, 
         total_vault_tokens
