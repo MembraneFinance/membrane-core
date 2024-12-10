@@ -1016,8 +1016,10 @@ pub fn fulfill_intents(
         let intents = USER_INTENTS.load(deps.storage, user.clone())?;
 
         for intent in intents.enter_lp_intents {
+            println!("post user: {:?}, {}", user.clone(), intent.user);
             //Get target position
             let (_, target_position) = get_target_position(deps.storage, deps.api.addr_validate(&user.clone())?, intent.position_id)?;
+            println!("post user: {:?}", user.clone());
 
             //Get LTV for the target position   
             let ((_, LTV, _), ((max_borrow_LTV, _, _, _, _))) = insolvency_check(
@@ -1091,8 +1093,15 @@ pub fn increase_debt(
         return Err(ContractError::Unauthorized { owner: config.owner.to_string() });
     }
 
+    //Set position owner
+    let position_owner = if let Some(mint_intent) = mint_intent.clone() {
+        deps.api.addr_validate(&mint_intent.user)?
+    } else {
+        info.clone().sender
+    };
+
     //Get Target position
-    let (position_index, mut target_position) = get_target_position(deps.storage, info.clone().sender, position_id)?;
+    let (position_index, mut target_position) = get_target_position(deps.storage, position_owner.clone(), position_id)?;
 
     
     //If any cAsset is a rate_hike asset, force a redemption 
@@ -1234,7 +1243,7 @@ pub fn increase_debt(
 
             //Add credit amount to the position
             //Update Position
-            POSITIONS.update(deps.storage, info.clone().sender, |positions: Option<Vec<Position>>| -> Result<Vec<Position>, ContractError> {
+            POSITIONS.update(deps.storage, position_owner.clone(), |positions: Option<Vec<Position>>| -> Result<Vec<Position>, ContractError> {
                 let mut updating_positions = positions.unwrap_or_else(|| vec![]);
                 updating_positions[position_index] = target_position.clone();
 
@@ -1258,14 +1267,14 @@ pub fn increase_debt(
         prev_credit_amount,
         prev_basket_credit,
         position_id, 
-        info.clone().sender,
+        position_owner.clone(),
     )?;
     
     //If a rate hike asset is deposited, force a redemption
     if set_redemption {
         edit_redemption_info(
             deps.storage,
-            info.clone().sender,
+            position_owner.clone(),
             vec![position_id.clone()],
             Some(true),
             Some(1),

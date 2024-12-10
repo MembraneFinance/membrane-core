@@ -653,7 +653,7 @@ pub fn get_asset_values(
 }
 
 /// Calculates the average LTV of a position.
-/// Returns avg_borrow_LTV, avg_max_LTV, total_value and cAsset_prices.
+/// Returns avg_borrow_LTV, avg_max_LTV, total_value, cAsset_prices & cAsset_ratios
 pub fn get_avg_LTV(
     storage: &dyn Storage,
     env: Env,
@@ -689,7 +689,7 @@ pub fn get_avg_LTV(
     )
 }
 
-/// Calculations for avg_borrow_LTV, avg_max_LTV, total_value and cAsset_prices
+/// Calculations for avg_borrow_LTV, avg_max_LTV, total_value, cAsset_prices & cAsset_ratios
 pub fn calculate_avg_LTV(
     cAsset_values: Vec<Decimal>,
     cAsset_prices: Vec<PriceResponse>,    
