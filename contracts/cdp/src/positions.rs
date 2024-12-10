@@ -1016,10 +1016,8 @@ pub fn fulfill_intents(
         let intents = USER_INTENTS.load(deps.storage, user.clone())?;
 
         for intent in intents.enter_lp_intents {
-            println!("post user: {:?}, {}", user.clone(), intent.user);
             //Get target position
             let (_, target_position) = get_target_position(deps.storage, deps.api.addr_validate(&user.clone())?, intent.position_id)?;
-            println!("post user: {:?}", user.clone());
 
             //Get LTV for the target position   
             let ((_, LTV, _), ((max_borrow_LTV, _, _, _, _))) = insolvency_check(
