@@ -967,6 +967,11 @@ pub fn set_intents(
             },
         };
 
+        //if mint LTV > 1, error.
+        if mint_intent.mint_to_ltv > Decimal::one() {
+            return Err(ContractError::CustomError { val: String::from("Mint LTV is above 1, maybe you forgot to add the decimal place?") })
+        }
+
         //Add, or edit intent if position id is the same
         if let Some((index, _)) = user_intents.enter_lp_intents.iter().enumerate().find(|(_i, intent)| intent.position_id == mint_intent.position_id){
 
@@ -1015,7 +1020,7 @@ pub fn fulfill_intents(
             let (_, target_position) = get_target_position(deps.storage, deps.api.addr_validate(&user.clone())?, intent.position_id)?;
 
             //Get LTV for the target position   
-            let ((_, LTV, _), (_)) = insolvency_check(
+            let ((_, LTV, _), ((max_borrow_LTV, _, _, _, _))) = insolvency_check(
                 deps.storage,
                 env.clone(),
                 deps.querier,
@@ -1027,8 +1032,11 @@ pub fn fulfill_intents(
                 config.clone(),
             )?;
 
+            //Set max mint intent
+            let mint_to_LTV = min(intent.mint_to_ltv, max_borrow_LTV);
+
             //If the LTV is below the mint_to_ltv, create mint msg
-            if LTV < intent.mint_to_ltv {
+            if LTV < mint_to_LTV {
                 //Create increase_debt msg to this contract
                 msgs.push(
                     CosmosMsg::Wasm(WasmMsg::Execute {
@@ -1036,7 +1044,7 @@ pub fn fulfill_intents(
                         msg: to_json_binary(&ExecuteMsg::IncreaseDebt {
                             position_id: intent.position_id,
                             amount: None,
-                            LTV: Some(intent.mint_to_ltv),
+                            LTV: Some(mint_to_LTV),
                             mint_to_addr: None,
                             mint_intent: Some(intent.clone()),
                         })?,
