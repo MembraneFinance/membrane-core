@@ -959,7 +959,13 @@ pub fn set_intents(
         let (_, _) = get_target_position(deps.storage, info.clone().sender, mint_intent.position_id)?;
 
         //Load UserIntents
-        let mut user_intents = USER_INTENTS.load(deps.storage, info.clone().sender.to_string())?;
+        let mut user_intents = match USER_INTENTS.load(deps.storage, info.clone().sender.to_string()){
+            Ok(user_intents) => user_intents,
+            Err(_err) => CDPUserIntents {
+                user: info.clone().sender.to_string(),
+                enter_lp_intents: vec![],
+            },
+        };
 
         //Add, or edit intent if position id is the same
         if let Some((index, _)) = user_intents.enter_lp_intents.iter().enumerate().find(|(_i, intent)| intent.position_id == mint_intent.position_id){

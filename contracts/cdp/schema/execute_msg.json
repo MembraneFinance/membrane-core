@@ -84,6 +84,17 @@
                 }
               ]
             },
+            "mint_intent": {
+              "description": "Contract uses this to mint for a user into the Range Bound Vault",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnterLPIntent"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "mint_to_addr": {
               "description": "Mint debt tokens to this address",
               "type": [
@@ -348,6 +359,111 @@
                 "string",
                 "null"
               ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Close a Position by selling collateral and repaying debt",
+      "type": "object",
+      "required": [
+        "close_position"
+      ],
+      "properties": {
+        "close_position": {
+          "type": "object",
+          "required": [
+            "max_spread",
+            "position_id"
+          ],
+          "properties": {
+            "close_percentage": {
+              "description": "% of the debt to repay, default 100%",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Decimal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "max_spread": {
+              "description": "Max spread for the sale of collateral",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/Decimal"
+                }
+              ]
+            },
+            "position_id": {
+              "description": "Position ID to close",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/Uint128"
+                }
+              ]
+            },
+            "send_to": {
+              "description": "Send excess assets to this address if not the Position owner",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "set_user_intents"
+      ],
+      "properties": {
+        "set_user_intents": {
+          "type": "object",
+          "properties": {
+            "mint_intent": {
+              "description": "Set an LTV for the \"mint to Range Bound Vault\" intent. If set to 0, removes the intent.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnterLPIntent"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Fulfill minting intent",
+      "type": "object",
+      "required": [
+        "fulfill_intents"
+      ],
+      "properties": {
+        "fulfill_intents": {
+          "type": "object",
+          "required": [
+            "users"
+          ],
+          "properties": {
+            "users": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "additionalProperties": false
@@ -659,6 +775,16 @@
             "null"
           ]
         },
+        "revenue_destinations": {
+          "description": "Set destination ratios for revenue distribution",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/RevenueDestination"
+          }
+        },
         "take_revenue": {
           "description": "Take revenue, used as a way to distribute revenue",
           "anyOf": [
@@ -669,6 +795,27 @@
               "type": "null"
             }
           ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "EnterLPIntent": {
+      "description": "Enter RB LP Vault Intent",
+      "type": "object",
+      "required": [
+        "mint_to_ltv",
+        "position_id",
+        "user"
+      ],
+      "properties": {
+        "mint_to_ltv": {
+          "$ref": "#/definitions/Decimal"
+        },
+        "position_id": {
+          "$ref": "#/definitions/Uint128"
+        },
+        "user": {
+          "type": "string"
         }
       },
       "additionalProperties": false
@@ -806,6 +953,32 @@
           "additionalProperties": false
         }
       ]
+    },
+    "RevenueDestination": {
+      "type": "object",
+      "required": [
+        "destination",
+        "distribution_ratio"
+      ],
+      "properties": {
+        "destination": {
+          "description": "Revenue destination",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Addr"
+            }
+          ]
+        },
+        "distribution_ratio": {
+          "description": "Distribution ratio",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Decimal"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "SupplyCap": {
       "type": "object",
@@ -1019,8 +1192,30 @@
             "null"
           ]
         },
+        "rate_hike_rate": {
+          "description": "Rate hike rate",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "rate_slope_multiplier": {
           "description": "Interest rate 2nd Slope multiplier",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "redemption_fee": {
+          "description": "Redemption Fee",
           "anyOf": [
             {
               "$ref": "#/definitions/Decimal"
@@ -1063,6 +1258,13 @@
             {
               "$ref": "#/definitions/Asset"
             }
+          ]
+        },
+        "hike_rates": {
+          "description": "Is this subject to rate hikes?",
+          "type": [
+            "boolean",
+            "null"
           ]
         },
         "max_LTV": {

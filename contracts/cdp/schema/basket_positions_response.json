@@ -243,6 +243,13 @@
             }
           ]
         },
+        "hike_rates": {
+          "description": "Is this subject to rate hikes?",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "max_LTV": {
           "description": "Liquidation LTV",
           "allOf": [

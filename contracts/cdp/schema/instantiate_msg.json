@@ -49,7 +49,7 @@
       ]
     },
     "debt_minimum": {
-      "description": "Minimum debt per position to ensure liquidatibility",
+      "description": "Minimum debt value per position to ensure liquidatibility",
       "allOf": [
         {
           "$ref": "#/definitions/Uint128"
@@ -418,6 +418,13 @@
             {
               "$ref": "#/definitions/Asset"
             }
+          ]
+        },
+        "hike_rates": {
+          "description": "Is this subject to rate hikes?",
+          "type": [
+            "boolean",
+            "null"
           ]
         },
         "max_LTV": {

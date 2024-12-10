@@ -142,8 +142,18 @@
       "minimum": 0.0
     },
     "rev_to_stakers": {
-      "description": "Toggle to allow stakers to automatically receive rate revenue",
+      "description": "Toggle to allow revenue to be distributed to the revenue_destinations. If false, revenue is left in pending_revenue.",
       "type": "boolean"
+    },
+    "revenue_destinations": {
+      "description": "Revenue destinations distribution All destinations must have a DepositFee execute msg entrypoint. The remaining ratio space is left in pending revenue a la the 'Insurance Fund'. Only an Option for backwards compatibility, don't set to None.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/definitions/RevenueDestination"
+      }
     }
   },
   "additionalProperties": false,
@@ -390,6 +400,32 @@
       },
       "additionalProperties": false
     },
+    "RevenueDestination": {
+      "type": "object",
+      "required": [
+        "destination",
+        "distribution_ratio"
+      ],
+      "properties": {
+        "destination": {
+          "description": "Revenue destination",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Addr"
+            }
+          ]
+        },
+        "distribution_ratio": {
+          "description": "Distribution ratio",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Decimal"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "SupplyCap": {
       "type": "object",
       "required": [
@@ -470,6 +506,13 @@
             {
               "$ref": "#/definitions/Asset"
             }
+          ]
+        },
+        "hike_rates": {
+          "description": "Is this subject to rate hikes?",
+          "type": [
+            "boolean",
+            "null"
           ]
         },
         "max_LTV": {

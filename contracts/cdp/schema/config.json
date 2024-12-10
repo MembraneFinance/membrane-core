@@ -62,7 +62,7 @@
       ]
     },
     "dex_router": {
-      "description": "Apollo DEX router contract address. Note: Will need to change msg types if the router provider changes",
+      "description": "Apollo DEX router contract address. Note: Will need to change msg types if the router provider changes. Unused. The contract uses the Osmosis Proxy for swaps.",
       "anyOf": [
         {
           "$ref": "#/definitions/Addr"
@@ -138,11 +138,33 @@
         }
       ]
     },
+    "rate_hike_rate": {
+      "description": "Rate hike rate",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Decimal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "rate_slope_multiplier": {
       "description": "Interest rate 2nd Slope multiplier",
       "allOf": [
         {
           "$ref": "#/definitions/Decimal"
+        }
+      ]
+    },
+    "redemption_fee": {
+      "description": "Redemption Fee",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Decimal"
+        },
+        {
+          "type": "null"
         }
       ]
     },
