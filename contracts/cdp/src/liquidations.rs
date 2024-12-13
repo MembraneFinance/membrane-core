@@ -139,7 +139,7 @@ pub fn liquidate(
     let user_rblp_repay_amount = get_rblp_user_repay_amount(querier, config.clone(), basket.clone(), position_id, position_owner.clone(), &mut credit_repay_amount, &mut submessages)?;
 
     //Set user_repay_amount
-    let user_repay_amount: Decimal =  user_rblp_repay_amount;
+    let user_repay_amount: Decimal =  user_rblp_repay_amount + user_sp_repay_amount;
     
     //Track total leftover repayment after the liq_queue
     let leftover_repayment: Decimal = credit_repay_amount;
