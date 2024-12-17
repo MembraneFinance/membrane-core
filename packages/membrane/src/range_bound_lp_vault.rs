@@ -18,6 +18,13 @@ pub struct LeaveTokens {
     pub percent_to_leave: Decimal,
     pub intent_for_tokens: RangeBoundUserIntents,
 }
+
+#[cw_serde]
+pub struct ReduceTokens {
+    pub amount: Uint128,
+    pub exit_vault: bool,
+}
+
 #[cw_serde]
 pub enum ExecuteMsg {
     /// Enter the vault 100% CDT
@@ -44,7 +51,7 @@ pub enum ExecuteMsg {
     /// NOTE: We don't use the asset price initiation.
     SetUserIntents { 
         intents: RangeBoundUserIntents,
-        reduce_vault_tokens: Option<Uint128>,
+        reduce_vault_tokens: Option<ReduceTokens>,
     },
     /// Fulfill intents for a user. Send fees to the caller.
     FulFillUserIntents { users: Vec<String> },
