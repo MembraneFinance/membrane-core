@@ -742,27 +742,32 @@ fn exit_vault(
         }
         
 
-        //Send ceiling tokens to the user.
-        //These must be sent before the swap reply.
-        let send_deposit_tokens_msg: CosmosMsg = BankMsg::Send {
-            to_address: send_to.clone(),
-            amount: cdt_withdrawn_coins.clone(),
-        }.into();
-        //Add to msgs
-        msgs.push(SubMsg::new(send_deposit_tokens_msg));
+        
+        if !cdt_withdrawn_coins.is_empty() && cdt_withdrawn_coins[0].amount > Uint128::zero() {
+            //Send ceiling tokens to the user.
+            //These must be sent before the swap reply.
+            let send_deposit_tokens_msg: CosmosMsg = BankMsg::Send {
+                to_address: send_to.clone(),
+                amount: cdt_withdrawn_coins.clone(),
+            }.into();
+            //Add to msgs
+            msgs.push(SubMsg::new(send_deposit_tokens_msg));
+        }
 
 
-        //Swap FLOOR to CEILING                
-        let swap_to_ceiling: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
-            contract_addr: config.osmosis_proxy_contract_addr.to_string(),
-            msg: to_json_binary(&OP_ExecuteMsg::ExecuteSwaps {
-                token_out: config.range_tokens.clone().ceiling_deposit_token,
-                max_slippage: Decimal::percent(1), //we'd take whatever if this was only swapping yields but its the full deposit
-            })?,
-            funds: usdc_withdrawn_coins,
-        });
-        //Add to msgs as SubMsg
-        msgs.push(SubMsg::reply_on_success(swap_to_ceiling, SEND_SWAPPED_USDC_TO_USER_REPLY_ID));
+        if !usdc_withdrawn_coins.is_empty() && usdc_withdrawn_coins[0].amount > Uint128::zero() {
+            //Swap FLOOR to CEILING                
+            let swap_to_ceiling: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: config.osmosis_proxy_contract_addr.to_string(),
+                msg: to_json_binary(&OP_ExecuteMsg::ExecuteSwaps {
+                    token_out: config.range_tokens.clone().ceiling_deposit_token,
+                    max_slippage: Decimal::percent(1), //we'd take whatever if this was only swapping yields but its the full deposit
+                })?,
+                funds: usdc_withdrawn_coins,
+            });
+            //Add to msgs as SubMsg
+            msgs.push(SubMsg::reply_on_success(swap_to_ceiling, SEND_SWAPPED_USDC_TO_USER_REPLY_ID));
+        }
         //Save CDP REPAY PROP to save user info and contract balances
         CDP_REPAY_PROPAGATION.save(deps.storage, &RepayProp {
             user_info: UserInfo {
