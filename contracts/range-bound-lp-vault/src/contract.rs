@@ -1430,12 +1430,14 @@ fn repay_user_debt(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    user_info: UserInfo,
+    mut user_info: UserInfo,
     repayment: Uint128, //This is the amount of the deposit asset to repay
 ) -> Result<Response, TokenFactoryError> {
-    //Assert sender is the Positions contract
+
+    //If the sender isn't the Positions contract, they can only repay their own assets/positions.
+    //The repayments or intent load will simply error if they aren't using their own info.
     if info.sender.to_string() != String::from("osmo1gy5gpqqlth0jpm9ydxlmff6g5mpnfvrfxd3mfc8dhyt03waumtzqt8exxr") {
-        return Err(TokenFactoryError::Unauthorized {});
+        user_info.position_owner = info.sender.clone().to_string()
     }
 
     //Load config
