@@ -16,7 +16,7 @@ use membrane::oracle::PriceResponse;
 use crate::error::TokenFactoryError;
 use crate::state::{IntentProp, TokenRateAssurance, RepayProp, CDP_REPAY_PROPAGATION, CLAIM_TRACKER, CONFIG, INTENT_PROPAGATION, OWNERSHIP_TRANSFER, TOKEN_RATE_ASSURANCE, USER_INTENT_STATE, VAULT_TOKEN};
 use membrane::range_bound_lp_vault::{
-    Config, ExecuteMsg, InstantiateMsg, LeaveTokens, MigrateMsg, QueryMsg, UserIntentResponse
+    Config, ExecuteMsg, InstantiateMsg, LeaveTokens, MigrateMsg, QueryMsg, ReduceTokens, UserIntentResponse
 };
 use membrane::stability_pool_vault::{
     calculate_base_tokens, calculate_vault_tokens
@@ -733,7 +733,7 @@ fn exit_vault(
         //Split withdrawn tokens into CDT & USDC
         let mut cdt_withdrawn_coins: Vec<Coin> = vec![];
         let mut usdc_withdrawn_coins: Vec<Coin> = vec![];
-        for coin in user_withdrawn_coins {
+        for coin in user_withdrawn_coins.clone() {
             if coin.denom == config.range_tokens.ceiling_deposit_token {
                 cdt_withdrawn_coins.push(coin.clone());
             } else if coin.denom == config.range_tokens.floor_deposit_token {
@@ -766,7 +766,7 @@ fn exit_vault(
         //Save CDP REPAY PROP to save user info and contract balances
         CDP_REPAY_PROPAGATION.save(deps.storage, &RepayProp {
             user_info: UserInfo {
-                position_id: 0,
+                position_id: Uint128::zero(),
                 position_owner: send_to.clone(),
             },
             prev_cdt_balance: deps.querier.query_balance(env.contract.address.to_string(), config.range_tokens.ceiling_deposit_token.clone())?.amount,
@@ -809,11 +809,11 @@ fn exit_vault(
     //We skip if the contract is send_to bc it'll leave tokens in the vault.
     if !new_vault_token_supply.is_zero() && withdrawal_ratio != Decimal::one() && send_to != env.contract.address.to_string() {
         //UNCOMMENT
-        msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
+        msgs.push(SubMsg::new(CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: env.contract.address.to_string(),
             msg: to_json_binary(&ExecuteMsg::RateAssurance { })?,
             funds: vec![],
-        }));
+        })));
     } 
 
 
@@ -1179,7 +1179,7 @@ fn set_intents(
         Err(_) => {
             
             //Check if the user is setting intents
-            if let Some(intents) = intents {
+            if let Some(mut intents) = intents {
             
                 let total_vault_tokens = VAULT_TOKEN.load(deps.storage)?;
 
@@ -1250,7 +1250,7 @@ fn set_intents(
                 //Exits the reduced tokens & swaps them to CDT
                 let exit_vault_msg: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
                     contract_addr: env.contract.address.to_string(),
-                    msg: to_json_binary(&ExecuteMsg::ExitVault { send_to: info.clone().sender.to_string(), swap_to_cdt: true })?,
+                    msg: to_json_binary(&ExecuteMsg::ExitVault { send_to: Some(info.clone().sender.to_string()), swap_to_cdt: true })?,
                     funds: vec![
                         Coin {
                             denom: config.vault_token.clone(),
