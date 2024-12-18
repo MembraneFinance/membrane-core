@@ -35,6 +35,7 @@ pub enum ExecuteMsg {
     /// The App can swap into a single token and give value options based on swap rate.
     ExitVault {
         send_to: Option<String>,
+        swap_to_cdt: bool
     },
     /// Deposits CDT revenue into the contract. 
     /// We use a msg enum bc the CDP needs it.
@@ -50,7 +51,7 @@ pub enum ExecuteMsg {
     /// Set intents for a user. They must send vault tokens or have a non-zero balance in state.
     /// NOTE: We don't use the asset price initiation.
     SetUserIntents { 
-        intents: RangeBoundUserIntents,
+        intents: Option<RangeBoundUserIntents>,
         reduce_vault_tokens: Option<ReduceTokens>,
     },
     /// Fulfill intents for a user. Send fees to the caller.
