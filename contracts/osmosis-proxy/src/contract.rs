@@ -1,6 +1,7 @@
 //Token factory fork
 //https://github.com/osmosis-labs/bindings/blob/main/contracts/tokenfactory
 
+use std::collections::{HashSet, VecDeque};
 use std::convert::TryInto;
 
 #[cfg(not(feature = "library"))]
@@ -242,62 +243,42 @@ fn execute_swaps(
     .add_submessages(msgs))
 }
 
-fn get_swap_route(swap_routes: Vec<SwapRoute>, mut token_in: String, token_out: String) -> Result<Vec<SwapAmountInRoute>, TokenFactoryError> {
-    let mut iterations = 0u64;
+fn get_swap_route(swap_routes: Vec<SwapRoute>, token_in: String, token_out: String) -> Result<Vec<SwapAmountInRoute>, TokenFactoryError> {
+    // Track visited tokens to avoid cycles
+    let mut visited = HashSet::new();
+    // Queue of (token, path) pairs to explore
+    let mut queue = VecDeque::new();
+    // Start with initial token
+    queue.push_back((token_in.clone(), vec![]));
+    visited.insert(token_in.clone());
     
-    //Search swap route for token_in
-    let swap_route = match swap_routes.clone().into_iter().find(|route| route.token_in == token_in){
-        Some(route) => route,
-        None => return Err(TokenFactoryError::CustomError { val: format!("{:?} not found in swap routes", token_in) })
-    };
-    let mut routes: Vec<SwapAmountInRoute> = vec![swap_route.route_out.clone()];
-    
-    //Update token_in
-    token_in = swap_route.route_out.token_out_denom;
-
-    while (token_out != routes[routes.len() - 1].token_out_denom && iterations < 5){
-        //Search swap route for token_in
-        let swap_route = swap_routes.clone()
-            .into_iter()
-            .filter(|route| route.token_in == token_in)
-            .collect::<Vec<SwapRoute>>();
-        
-        if swap_route.len() == 0 { return Err(TokenFactoryError::CustomError { val: format!("{:?} not found in embedded swap routes", token_in) }) }
-
-        //Prio 1: token_out
-        if let Some(route) = swap_route.clone().into_iter().find(|route| route.route_out.token_out_denom == token_out) {
-            //Add route to routes
-            routes.push(route.route_out.clone());
-            //Update token_in
-            token_in = route.route_out.clone().token_out_denom;
-            break;
+    while let Some((current_token, mut current_path)) = queue.pop_front() {
+        // Get all possible next hops from current token
+        let next_routes = swap_routes.iter()
+            .filter(|route| route.token_in == current_token);
+            
+        for route in next_routes {
+            let next_token = route.route_out.token_out_denom.clone();
+            
+            // Found path to target token
+            if next_token == token_out {
+                current_path.push(route.route_out.clone());
+                return Ok(current_path);
+            }
+            
+            // Haven't visited this token yet, add to queue
+            if !visited.contains(&next_token) {
+                visited.insert(next_token.clone());
+                let mut new_path = current_path.clone();
+                new_path.push(route.route_out.clone());
+                queue.push_back((next_token, new_path));
+            }
         }
-        //Prio 2: Noble USDC
-        else if let Some(route) = swap_route.clone().into_iter().find(|route| route.route_out.token_out_denom == "ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4") {
-            //Add route to routes
-            routes.push(route.route_out.clone());
-            //Update token_in
-            token_in = route.route_out.clone().token_out_denom;
-        }
-        //Prio 3: OSMO
-        else if let Some(route) = swap_route.clone().into_iter().find(|route| route.route_out.token_out_denom == "uosmo") {
-            //Add route to routes
-            routes.push(route.route_out.clone());
-            //Update token_in
-            token_in = route.route_out.clone().token_out_denom;
-        }
-
-
-        //Increment iterations
-        iterations += 1;
     }
 
-    //Check if token_out is in the last route
-    if token_out != routes[routes.len() - 1].token_out_denom {
-        return Err(TokenFactoryError::CustomError { val: format!("{:?} not found in swap routes for {:?} within 6 hops", token_out, token_in) })
-    }
-
-    Ok(routes)
+    Err(TokenFactoryError::CustomError { 
+        val: format!("No route found from {:?} to {:?}", token_in, token_out) 
+    })
 }
 
 /// Update contract configuration

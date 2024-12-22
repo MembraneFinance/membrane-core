@@ -532,7 +532,11 @@ fn enter_vault(
             //Create or update the user's intent state
             USER_INTENT_STATE.update(deps.storage, user.clone(), |state| -> Result<UserIntentState, TokenFactoryError> {
                 if let Some(mut user_intent_state) = state {
+                    //update new VTs
                     user_intent_state.vault_tokens += vault_tokens_to_leave;
+                    //update purchase intents
+                    user_intent_state.intents.purchase_intents.extend(intent_info.clone().intent_for_tokens.purchase_intents);
+                    
                     return Ok(user_intent_state);
                 } else {
                     let user_intent_state = UserIntentState {
