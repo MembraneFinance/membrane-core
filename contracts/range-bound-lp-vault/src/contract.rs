@@ -536,6 +536,15 @@ fn enter_vault(
                     user_intent_state.vault_tokens += vault_tokens_to_leave;
                     //update purchase intents
                     user_intent_state.intents.purchase_intents.extend(intent_info.clone().intent_for_tokens.purchase_intents);
+                    //Edit yield percent to split evenly between all intents
+                    let yield_split = decimal_division(
+                        Decimal::one(),
+                        Decimal::from_ratio(Uint128::new(user_intent_state.intents.purchase_intents.len() as u128), Uint128::one())
+                    )?;
+                    user_intent_state.intents.purchase_intents.iter_mut().for_each(|intent| {
+                        intent.yield_percent = yield_split;
+                    });
+                    //If user wants to change they can do it manually after but this is to ensure intent entries from the CDP contract are split evenly & don't go over 100% without having to error for it
                     
                     return Ok(user_intent_state);
                 } else {
@@ -1177,8 +1186,8 @@ fn set_intents(
                     return Err(TokenFactoryError::CustomError { val: String::from("Yield distribution cannot exceed 100%") });
                 }
                 //Make sure intents aren't empty
-                if state.intents.purchase_intents.len() == 0 && reduce_vault_tokens.is_none() {
-                    return Err(TokenFactoryError::CustomError { val: String::from("Intents cannot be empty unless you are removing vault tokens from the intent.") });
+                if state.intents.purchase_intents.len() == 0 && reduce_vault_tokens.is_none() && !state.vault_tokens.is_zero() {
+                    return Err(TokenFactoryError::CustomError { val: String::from("Intents cannot be empty unless you are removing vault tokens from the intent or vault tokens are already zero because of a repayment/exit.") });
                 }
             }
 
