@@ -528,14 +528,14 @@ fn claim_mbrn_from_points(
     }
 
     //Assert MBRN to claim is less than the max distribution
-    if mbrn_to_claim + config.clone().total_mbrn_distribution > config.clone().max_mbrn_distribution {
+    // if mbrn_to_claim + config.clone().total_mbrn_distribution > config.clone().max_mbrn_distribution {
         
-        //Set MBRN to claim as any remaining MBRN to reach the max distribution
-        mbrn_to_claim = match config.clone().max_mbrn_distribution.checked_sub(config.clone().total_mbrn_distribution){
-            Ok(amount) => amount,
-            Err(_) => return Err(ContractError::Std(StdError::generic_err("Claimable MBRN exceeds the max distribution")))
-        };
-    }
+    //     //Set MBRN to claim as any remaining MBRN to reach the max distribution
+    //     mbrn_to_claim = match config.clone().max_mbrn_distribution.checked_sub(config.clone().total_mbrn_distribution){
+    //         Ok(amount) => amount,
+    //         Err(_) => return Err(ContractError::Std(StdError::generic_err("Claimable MBRN exceeds the max distribution")))
+    //     };
+    // }
 
     //Update total MBRN distribution
     config.total_mbrn_distribution += mbrn_to_claim;
@@ -546,14 +546,26 @@ fn claim_mbrn_from_points(
     updated_stats.claimable_points = Decimal::zero();
 
     //Mint MBRN to user
-    let mbrn_mint: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
-        contract_addr: config.clone().osmosis_proxy_contract.to_string(),
-        msg: to_json_binary(&OP_ExecuteMsg::MintTokens { 
-            denom: String::from("factory/osmo1s794h9rxggytja3a4pmwul53u98k06zy2qtrdvjnfuxruh7s8yjs6cyxgd/umbrn"), 
-            amount: mbrn_to_claim, 
-            mint_to_address: info.sender.clone().to_string(), 
-        })?,
-        funds: vec![],
+    // let mbrn_mint: CosmosMsg = CosmosMsg::Wasm(WasmMsg::Execute {
+    //     contract_addr: config.clone().osmosis_proxy_contract.to_string(),
+    //     msg: to_json_binary(&OP_ExecuteMsg::MintTokens { 
+    //         denom: String::from("factory/osmo1s794h9rxggytja3a4pmwul53u98k06zy2qtrdvjnfuxruh7s8yjs6cyxgd/umbrn"), 
+    //         amount: mbrn_to_claim, 
+    //         mint_to_address: info.sender.clone().to_string(), 
+    //     })?,
+    //     funds: vec![],
+    // });
+
+    //Send MBRN to user from the contract's balances.
+    //NOTE: Using balance as the max means we won't use the config's max as a restriction.
+    let mbrn_send: CosmosMsg = CosmosMsg::Bank(BankMsg::Send {
+        to_address:info.sender.clone().to_string(),
+        amount: vec![
+            Coin {
+                denom: String::from("factory/osmo1s794h9rxggytja3a4pmwul53u98k06zy2qtrdvjnfuxruh7s8yjs6cyxgd/umbrn"), 
+                amount: mbrn_to_claim, 
+            }
+        ],
     });
 
     //Save updated stats
@@ -566,7 +578,7 @@ fn claim_mbrn_from_points(
 
     Ok(Response::new()
     .add_attributes(attrs)
-    .add_message(mbrn_mint))
+    .add_message(mbrn_send))
 }
 
 fn allocate_points(
