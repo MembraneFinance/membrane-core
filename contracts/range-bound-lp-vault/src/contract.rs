@@ -2006,11 +2006,19 @@ fn handle_parse_purchase_intents_reply(
 
             //Load Intents propagation
             let intent_prop = INTENT_PROPAGATION.load(deps.storage)?;
+
                         
             //Parse thru intents & send or compound the desired asset
             for intent in intent_prop.intents.purchase_intents.clone() {
                 //Get the balance of the desired asset
                 let desired_asset_balance = deps.querier.query_balance(env.contract.address.to_string(), intent.desired_asset.clone())?.amount;
+                
+                //Parse thru intents to find how much of the desired asset is supposed to be given to this intent.
+                //We look for multiple intents with the same asset & split using the ratios of their yield_percent.
+                let intents_for_desired_asset = intent_prop.intents.purchase_intents.clone().filter(|saved_intent| saved_intent.desired_asset == intent.desired_asset.clone());
+                let sum_of_yield_percents = intents_for_desired_asset.clone().into_iter().map(|saved_intent| saved_intent.yield_percent).collect::<Decimal>().sum::<Decimal>();
+                let ratio_of_desired_asset_balance_for_this_intent = decimal_division(intent.yield_percent, sum_of_yield_percents)?;
+                let desired_asset_balance = desired_asset_balance * ratio_of_desired_asset_balance_for_this_intent;
 
                 //If the intent has a position_id compound
                 if let Some(position_id) = intent.position_id {
