@@ -534,17 +534,24 @@ fn enter_vault(
                 if let Some(mut user_intent_state) = state {
                     //update new VTs
                     user_intent_state.vault_tokens += vault_tokens_to_leave;
-                    //update purchase intents
-                    user_intent_state.intents.purchase_intents.extend(intent_info.clone().intent_for_tokens.purchase_intents);
-                    //Edit yield percent to split evenly between all intents
-                    let yield_split = decimal_division(
-                        Decimal::one(),
-                        Decimal::from_ratio(Uint128::new(user_intent_state.intents.purchase_intents.len() as u128), Uint128::one())
-                    )?;
-                    user_intent_state.intents.purchase_intents.iter_mut().for_each(|intent| {
-                        intent.yield_percent = yield_split;
-                    });
-                    //If user wants to change they can do it manually after but this is to ensure intent entries from the CDP contract are split evenly & don't go over 100% without having to error for it
+
+                    //If the incoming intent for a position has an existing position intent, don't update intents, only add the vts
+                    if let Some(id) = intent_info.clone().intent_for_tokens.purchase_intents[0].position_id {
+                        //If no matching intent found, we update state
+                        if let None = user_intent_state.intents.purchase_intents.iter().find(|intent| intent.position_id.unwrap_or_else(|| 0u64) == id){                            
+                            //update purchase intents
+                            user_intent_state.intents.purchase_intents.extend(intent_info.clone().intent_for_tokens.purchase_intents);
+                            //Edit yield percent to split evenly between all intents
+                            let yield_split = decimal_division(
+                                Decimal::one(),
+                                Decimal::from_ratio(Uint128::new(user_intent_state.intents.purchase_intents.len() as u128), Uint128::one())
+                            )?;
+                            user_intent_state.intents.purchase_intents.iter_mut().for_each(|intent| {
+                                intent.yield_percent = yield_split;
+                            });
+                            //If user wants to change they can do it manually after but this is to ensure intent entries from the CDP contract are split evenly & don't go over 100% without having to error for it       
+                        }
+                    }
                     
                     return Ok(user_intent_state);
                 } else {
